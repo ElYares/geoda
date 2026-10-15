@@ -12,6 +12,6 @@ mod tests {
 
     #[test]
     fn version_no_esta_vacia() {
-        assert!(!version().is_empty());
+        assert_ne!(version(), "");
     }
 }
