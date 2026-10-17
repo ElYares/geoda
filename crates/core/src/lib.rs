@@ -2,6 +2,7 @@
 
 pub mod datatype;
 pub mod error;
+pub mod memory;
 pub mod schema;
 
 pub use datatype::DataType;
