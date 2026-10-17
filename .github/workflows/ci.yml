@@ -21,3 +21,15 @@ jobs:
       - run: cargo test --workspace
       - name: geoda-core sin dependencias
         run: test "$(cargo tree -p geoda-core --edges normal,build,dev --prefix none | wc -l)" -eq 1
+
+  miri:
+    # Unica capa con unsafe: Miri detecta lecturas fuera de rango, desalineacion
+    # y fugas en core::memory. Necesita nightly; el resto del CI usa stable.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - run: cargo miri setup
+      - run: cargo miri test -p geoda-core memory::
