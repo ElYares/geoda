@@ -1,6 +1,6 @@
 //! Bitmap: un bit por valor, 1 = valido, 0 = nulo. Orden LSB primero, como Arrow.
 
-use super::MutableBuffer;
+use super::{Buffer, MutableBuffer};
 use crate::Error;
 
 /// Secuencia de bits sobre memoria alineada.
@@ -72,6 +72,12 @@ impl Bitmap {
             .sum()
     }
 
+    /// Congela los bits en un [`Buffer`] compartible (los bytes, sin el `len`).
+    #[must_use]
+    pub fn into_buffer(self) -> Buffer {
+        self.bits.into_buffer()
+    }
+
     /// Byte y mascara del bit `i`, o `OutOfBounds` si se sale de `len`.
     fn posicion(&self, i: usize) -> Result<(usize, u8), Error> {
         if i >= self.len {
@@ -82,6 +88,21 @@ impl Bitmap {
         }
         Ok((i / 8, 1 << (i % 8)))
     }
+}
+
+/// Bit `i` de `bytes` (orden LSB primero). Hace panic si `i` se sale de
+/// `bytes`: quien llama ya valido el rango (`Column::try_new`).
+#[must_use]
+pub(crate) fn get_bit(bytes: &[u8], i: usize) -> bool {
+    bytes[i / 8] & (1 << (i % 8)) != 0
+}
+
+/// Cuantos bits estan en 1 dentro de `[offset, offset + len)` de `bytes`.
+#[must_use]
+pub(crate) fn count_set_bits(bytes: &[u8], offset: usize, len: usize) -> usize {
+    (offset..offset + len)
+        .filter(|&i| get_bit(bytes, i))
+        .count()
 }
 
 #[cfg(test)]
@@ -182,5 +203,23 @@ mod tests {
                 "len = {len}"
             );
         }
+    }
+
+    #[test]
+    fn into_buffer_conserva_los_bits() {
+        let mut b = Bitmap::new(10).unwrap();
+        b.set(1, true).unwrap();
+        b.set(9, true).unwrap();
+        let buf = b.into_buffer();
+        assert_eq!(buf.as_slice(), &[0b0000_0010, 0b0000_0010]);
+    }
+
+    #[test]
+    fn contar_bits_en_un_tramo() {
+        let bytes = [0b1010_1010, 0b0000_0001];
+        assert_eq!(super::count_set_bits(&bytes, 0, 16), 5);
+        assert_eq!(super::count_set_bits(&bytes, 1, 3), 2);
+        assert_eq!(super::count_set_bits(&bytes, 4, 0), 0);
+        assert!(super::get_bit(&bytes, 8));
     }
 }
