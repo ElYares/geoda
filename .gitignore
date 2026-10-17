@@ -7,3 +7,8 @@ __pycache__/
 node_modules/
 .venv/
 graphify-out/
+
+# secretos locales
+.env
+.env.*
+!.env.example
