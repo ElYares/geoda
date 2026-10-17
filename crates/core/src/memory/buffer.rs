@@ -5,6 +5,7 @@ use std::num::NonZeroUsize;
 use std::ptr::NonNull;
 use std::sync::Arc;
 
+use super::Native;
 use crate::Error;
 
 /// Alineacion en bytes de todo bloque: una linea de cache y un registro AVX-512.
@@ -124,6 +125,15 @@ pub struct Buffer {
     len: usize,
 }
 
+impl std::fmt::Debug for Buffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Buffer")
+            .field("offset", &self.offset)
+            .field("len", &self.len)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Buffer {
     /// Cantidad de bytes de la ventana.
     #[must_use]
@@ -153,12 +163,48 @@ impl Buffer {
         unsafe { std::slice::from_raw_parts(self.as_ptr(), self.len) }
     }
 
+    /// Copia `bytes` a un bloque nuevo alineado a 64 y lo congela.
+    ///
+    /// # Errors
+    /// Los de [`MutableBuffer::zeroed`].
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
+        let mut m = MutableBuffer::zeroed(bytes.len())?;
+        m.as_mut_slice().copy_from_slice(bytes);
+        Ok(m.into_buffer())
+    }
+
+    /// Reinterpreta la ventana como `[T]`, sin copiar.
+    ///
+    /// # Errors
+    /// [`Error::InvalidArgument`] si el largo no es multiplo de `T::WIDTH` o si
+    /// el puntero (por un `slice` con offset) no esta alineado para `T`.
+    pub fn typed<T: Native>(&self) -> Result<&[T], Error> {
+        if !self.len.is_multiple_of(T::WIDTH) {
+            return Err(Error::InvalidArgument(format!(
+                "{} bytes no son multiplo de {}",
+                self.len,
+                T::WIDTH
+            )));
+        }
+        if !(self.as_ptr() as usize).is_multiple_of(std::mem::align_of::<T>()) {
+            return Err(Error::InvalidArgument(format!(
+                "buffer desalineado para un tipo de {} bytes",
+                T::WIDTH
+            )));
+        }
+        // SAFETY: el puntero esta alineado para `T` y `len` es multiplo de su
+        // ancho (comprobado arriba), asi que `len / WIDTH` valores caben en la
+        // ventana. `Native` esta sellado a tipos donde todo patron de bits es un
+        // valor valido, y la memoria vive y no se muta mientras exista `&self`.
+        Ok(unsafe { std::slice::from_raw_parts(self.as_ptr().cast::<T>(), self.len / T::WIDTH) })
+    }
+
     /// Sub-ventana `[offset, offset + len)` sobre el mismo bloque, sin copiar.
     ///
     /// # Errors
     /// [`Error::OutOfBounds`] si la ventana se sale de este `Buffer`.
     pub fn slice(&self, offset: usize, len: usize) -> Result<Self, Error> {
-        let end = offset
+        offset
             .checked_add(len)
             .filter(|&end| end <= self.len)
             .ok_or_else(|| {
@@ -167,7 +213,6 @@ impl Buffer {
                     self.len
                 ))
             })?;
-        debug_assert!(end <= self.len);
         Ok(Self {
             data: Arc::clone(&self.data),
             offset: self.offset + offset,
@@ -253,5 +298,42 @@ mod tests {
                 .join()
                 .unwrap();
         assert_eq!(suma, 6);
+    }
+
+    #[test]
+    fn from_bytes_copia_y_alinea() {
+        let b = Buffer::from_bytes(&[1, 2, 3]).unwrap();
+        assert_eq!(b.as_slice(), &[1, 2, 3]);
+        assert_eq!(b.as_ptr() as usize % ALIGNMENT, 0);
+    }
+
+    #[test]
+    fn typed_lee_los_bytes_como_numeros() {
+        let bytes: Vec<u8> = [7_i32, -1, 300]
+            .iter()
+            .flat_map(|x| x.to_ne_bytes())
+            .collect();
+        let b = Buffer::from_bytes(&bytes).unwrap();
+        assert_eq!(b.typed::<i32>().unwrap(), &[7, -1, 300]);
+        assert_eq!(
+            Buffer::from_bytes(&[]).unwrap().typed::<f64>().unwrap(),
+            &[] as &[f64]
+        );
+    }
+
+    #[test]
+    fn typed_con_largo_no_multiplo_es_err() {
+        let b = Buffer::from_bytes(&[0; 6]).unwrap();
+        assert!(matches!(b.typed::<i32>(), Err(Error::InvalidArgument(_))));
+    }
+
+    #[test]
+    fn typed_desalineado_es_err() {
+        // Base alineada a 64, pero un slice en el byte 2 no lo esta para i32.
+        let b = Buffer::from_bytes(&[0; 16]).unwrap().slice(2, 8).unwrap();
+        assert!(matches!(b.typed::<i32>(), Err(Error::InvalidArgument(_))));
+        // Un slice en un multiplo del ancho si vale.
+        let b = Buffer::from_bytes(&[0; 16]).unwrap().slice(4, 8).unwrap();
+        assert_eq!(b.typed::<i32>().unwrap().len(), 2);
     }
 }
