@@ -36,9 +36,8 @@ impl Column {
     /// - [`Error::OutOfBounds`] si `offset + len` desborda.
     /// - [`Error::LengthMismatch`] si faltan o sobran buffers, o son muy cortos
     ///   para `offset + len`.
-    /// - [`Error::InvalidArgument`] si los offsets de `Utf8` no son validos o el
-    ///   buffer de offsets esta desalineado.
-    /// - [`Error::Ffi`] si un valor `Utf8` no es UTF-8 valido.
+    /// - [`Error::InvalidArgument`] si los offsets de `Utf8` no son validos, el
+    ///   buffer de offsets esta desalineado o un valor no es UTF-8 valido.
     pub fn try_new(
         dtype: DataType,
         len: usize,
@@ -181,7 +180,7 @@ impl Column {
         let datos = self.buffers[1].as_slice();
         // Re-valida en vez de confiar: es la unica forma segura de devolver `&str`.
         std::str::from_utf8(&datos[to_usize(desde)?..to_usize(hasta)?])
-            .map_err(|e| Error::Ffi(format!("utf-8 invalido en el valor {i}: {e}")))
+            .map_err(|e| Error::InvalidArgument(format!("utf-8 invalido en el valor {i}: {e}")))
     }
 
     /// Sub-columna `[offset, offset + len)` sobre los mismos buffers, sin copiar.
@@ -303,7 +302,7 @@ fn check_utf8(offsets: &Buffer, datos: &Buffer, offset: usize, end: usize) -> Re
             ))
         })?;
         std::str::from_utf8(valor).map_err(|e| {
-            Error::Ffi(format!(
+            Error::InvalidArgument(format!(
                 "utf-8 invalido en el valor {}: {e}",
                 offset + i - 1
             ))
@@ -446,7 +445,7 @@ mod tests {
     #[test]
     fn utf8_con_bytes_invalidos_es_err() {
         let r = utf8(&[0, 2], &[0xFF, 0xFE], 1);
-        assert!(matches!(r, Err(Error::Ffi(_))));
+        assert!(matches!(r, Err(Error::InvalidArgument(_))));
     }
 
     #[test]
@@ -454,7 +453,7 @@ mod tests {
         // "é" son 2 bytes (C3 A9): partirlo en [0,1,2] deja dos mitades invalidas
         // aunque el bloque entero sea UTF-8 valido.
         let r = utf8(&[0, 1, 2], "é".as_bytes(), 2);
-        assert!(matches!(r, Err(Error::Ffi(_))));
+        assert!(matches!(r, Err(Error::InvalidArgument(_))));
     }
 
     #[test]
