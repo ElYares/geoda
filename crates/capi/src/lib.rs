@@ -241,7 +241,7 @@ mod tests {
         let r = unsafe { geoda_column_from_arrow(&raw const schema, &raw mut array, &raw mut out) };
         assert_eq!(r, GEODA_ERR_UNSUPPORTED);
         assert!(out.is_null());
-        assert!(!mensaje().is_empty());
+        assert_ne!(mensaje(), "");
         assert!(
             array.release.is_some(),
             "al fallar el array sigue siendo del llamador"
