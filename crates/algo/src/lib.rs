@@ -5,6 +5,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod select;
 pub mod sort;
 
+pub use select::{Method, Scalar, median_of_medians, quickselect, select_column};
 pub use sort::{merge_sort, sort_column};
