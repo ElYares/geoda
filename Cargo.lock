@@ -10,6 +10,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "geoda-bench"
+version = "0.0.0"
+dependencies = [
+ "geoda-algo",
+]
+
+[[package]]
 name = "geoda-capi"
 version = "0.0.0"
 dependencies = [
