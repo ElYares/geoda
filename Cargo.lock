@@ -3,5 +3,12 @@
 version = 4
 
 [[package]]
+name = "geoda-capi"
+version = "0.0.0"
+dependencies = [
+ "geoda-core",
+]
+
+[[package]]
 name = "geoda-core"
 version = "0.0.0"

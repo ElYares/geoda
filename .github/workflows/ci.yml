@@ -22,9 +22,18 @@ jobs:
       - name: geoda-core sin dependencias
         run: test "$(cargo tree -p geoda-core --edges normal,build,dev --prefix none | wc -l)" -eq 1
 
+  capi:
+    # La C-API vista desde C: cabecera sin diff y smoke test (con ASan/UBSan/LSan).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cbindgen --version 0.29.4 --locked
+      - run: tests/c/run.sh
+
   miri:
-    # Unica capa con unsafe: Miri detecta lecturas fuera de rango, desalineacion
-    # y fugas en core::memory. Necesita nightly; el resto del CI usa stable.
+    # Capas con unsafe: Miri detecta lecturas fuera de rango, desalineacion
+    # y fugas en core::memory, core::interop y la capi. Necesita nightly; el resto del CI usa stable.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,3 +42,4 @@ jobs:
           components: miri
       - run: cargo miri setup
       - run: "cargo miri test -p geoda-core -- memory:: interop::"
+      - run: cargo miri test -p geoda-capi

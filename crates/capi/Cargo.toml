@@ -1,0 +1,19 @@
+[package]
+name = "geoda-capi"
+description = "C-API de geoda: handles opacos, errores y version de ABI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+# El nombre de la biblioteca es `libgeoda`, el que ven los clientes de C.
+name = "geoda"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+geoda-core = { path = "../core" }
+
+[lints]
+workspace = true

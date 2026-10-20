@@ -1,0 +1,54 @@
+language = "C"
+include_guard = "GEODA_H"
+pragma_once = false
+no_includes = false
+usize_is_size_t = true
+documentation_style = "c99"
+cpp_compat = true
+header = "/* geoda C-API (v0). Generado con cbindgen: no editar a mano. */"
+
+# La Arrow C Data Interface la define Arrow, no geoda. Se copia tal cual, con la
+# guarda estandar, para convivir con `arrow/c/abi.h` si el cliente ya lo incluye.
+after_includes = """
+#ifndef ARROW_C_DATA_INTERFACE
+#define ARROW_C_DATA_INTERFACE
+
+#define ARROW_FLAG_DICTIONARY_ORDERED 1
+#define ARROW_FLAG_NULLABLE 2
+#define ARROW_FLAG_MAP_KEYS_SORTED 4
+
+struct ArrowSchema {
+  const char* format;
+  const char* name;
+  const char* metadata;
+  int64_t flags;
+  int64_t n_children;
+  struct ArrowSchema** children;
+  struct ArrowSchema* dictionary;
+  void (*release)(struct ArrowSchema*);
+  void* private_data;
+};
+
+struct ArrowArray {
+  int64_t length;
+  int64_t null_count;
+  int64_t offset;
+  int64_t n_buffers;
+  int64_t n_children;
+  const void** buffers;
+  struct ArrowArray** children;
+  struct ArrowArray* dictionary;
+  void (*release)(struct ArrowArray*);
+  void* private_data;
+};
+
+#endif  // ARROW_C_DATA_INTERFACE
+"""
+
+[export]
+exclude = ["ArrowSchema", "ArrowArray"]
+
+# Al ser tipos ajenos cbindgen no sabe que son `struct`; en C hace falta decirlo.
+[export.rename]
+ArrowSchema = "struct ArrowSchema"
+ArrowArray = "struct ArrowArray"
