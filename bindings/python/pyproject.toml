@@ -1,0 +1,15 @@
+[build-system]
+requires = ["maturin>=1.15,<2"]
+build-backend = "maturin"
+
+[project]
+name = "geoda"
+description = "Analisis y mineria de datos con nucleo en Rust"
+requires-python = ">=3.10"
+license = { text = "MIT OR Apache-2.0" }
+dynamic = ["version"]
+
+[tool.maturin]
+# `_geoda` = `lib.name` de Cargo.toml, dentro del paquete `geoda`.
+module-name = "geoda._geoda"
+python-source = "python"
