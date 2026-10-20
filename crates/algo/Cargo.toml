@@ -1,0 +1,14 @@
+[package]
+name = "geoda-algo"
+description = "Algoritmos base de geoda: ordenacion, seleccion, heaps, hash y busqueda"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+geoda-core = { path = "../core" }
+
+[lints]
+workspace = true
