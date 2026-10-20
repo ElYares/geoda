@@ -510,13 +510,21 @@ pub unsafe fn import_schema(schema: &ArrowSchema) -> Result<Schema, Error> {
     Schema::try_new(fields).map_err(ffi)
 }
 
-/// Columna a partir de un par `ArrowSchema` / `ArrowArray` hoja, copiando los datos.
-/// No libera nada.
+/// Cabecera de un array hoja ya validada: tipo y medidas, sin haber leido buffers.
+struct Header {
+    dtype: DataType,
+    length: usize,
+    offset: usize,
+    /// `offset + length`: cuantos valores hay que leer desde el inicio de cada buffer.
+    end: usize,
+}
+
+/// Valida la cabecera de un array hoja: tipo soportado, sin hijos ni diccionario,
+/// medidas no negativas que no desbordan y numero de buffers correcto. No lee buffers.
 ///
 /// # Safety
-/// Los punteros de `schema` y `array` deben ser validos segun la especificacion,
-/// y cada buffer de `array` debe poder leerse completo para `offset + length`.
-unsafe fn column_of(schema: &ArrowSchema, array: &ArrowArray) -> Result<Column, Error> {
+/// `schema.format` debe ser NULL o un texto terminado en cero valido.
+unsafe fn validate_header(schema: &ArrowSchema, array: &ArrowArray) -> Result<Header, Error> {
     // SAFETY: contrato de la funcion.
     let dtype = datatype_of(unsafe { c_str(schema.format, "format") }?)?;
     if schema.n_children != 0 || array.n_children != 0 {
@@ -540,76 +548,142 @@ unsafe fn column_of(schema: &ArrowSchema, array: &ArrowArray) -> Result<Column, 
         .checked_add(length)
         .ok_or_else(|| Error::Ffi("offset + length desborda".into()))?;
 
-    let esperados = if dtype == DataType::Utf8 {
+    let expected = if dtype == DataType::Utf8 {
         UTF8_BUFFERS
     } else {
         FIXED_BUFFERS
     };
-    if array.n_buffers != esperados || array.buffers.is_null() {
+    if array.n_buffers != expected || array.buffers.is_null() {
         return Err(Error::Ffi(format!(
-            "{dtype:?} lleva {esperados} buffers y llegaron {}",
+            "{dtype:?} lleva {expected} buffers y llegaron {}",
             array.n_buffers
         )));
     }
-    // SAFETY: `buffers` no es NULL y tiene `n_buffers` punteros.
-    let ptr_de = |i: usize| unsafe { *array.buffers.add(i) };
+    Ok(Header {
+        dtype,
+        length,
+        offset,
+        end,
+    })
+}
 
-    let bits = end.div_ceil(8);
-    // Sin puntero de validez = sin nulos.
-    // SAFETY: lee `bits` bytes (contrato de la funcion).
-    let validity = if ptr_de(0).is_null() {
-        None
-    } else {
-        Some(unsafe { copy_bytes(ptr_de(0), bits, "validez") }?)
-    };
+/// Puntero del buffer `i` del array.
+///
+/// # Safety
+/// `array.buffers` no debe ser NULL y debe tener al menos `i + 1` punteros; la
+/// cabecera ya validada garantiza `n_buffers` punteros.
+unsafe fn buffer_ptr(array: &ArrowArray, i: usize) -> *const c_void {
+    // SAFETY: contrato de la funcion.
+    unsafe { *array.buffers.add(i) }
+}
 
-    // Bytes de `n` valores de `w` bytes; `n` viene de la frontera, asi que se comprueba.
-    let bytes = |n: usize, w: usize| {
-        n.checked_mul(w)
-            .ok_or_else(|| Error::Ffi("valores * ancho desborda".into()))
-    };
-    // SAFETY (todos los `copy_bytes` de abajo): el contrato de la funcion dice que
-    // cada buffer se puede leer completo para `offset + length` valores.
-    let buffers = match dtype {
-        DataType::Bool => vec![unsafe { copy_bytes(ptr_de(1), bits, "valores") }?],
-        DataType::Int32 => {
-            vec![unsafe { copy_bytes(ptr_de(1), bytes(end, I32_WIDTH)?, "valores") }?]
-        }
-        DataType::Int64 | DataType::Float64 => {
-            vec![unsafe { copy_bytes(ptr_de(1), bytes(end, I64_WIDTH)?, "valores") }?]
-        }
-        DataType::Utf8 => {
-            // Un array vacio puede venir sin offsets: se sintetiza el unico [0].
-            let offsets = if end == 0 {
-                Buffer::from_bytes(&0_i32.to_ne_bytes())?
-            } else {
-                let n = end
-                    .checked_add(1)
-                    .ok_or_else(|| Error::Ffi("offset + length + 1 desborda".into()))?;
-                unsafe { copy_bytes(ptr_de(1), bytes(n, OFFSET_WIDTH)?, "offsets") }?
-            };
-            // Ya es nuestra copia (alineada), asi que se puede leer como [i32].
-            let ultimo = *offsets
-                .typed::<i32>()?
-                .get(end)
-                .ok_or_else(|| Error::Ffi("faltan offsets".into()))?;
-            let ultimo = non_negative(i64::from(ultimo), "ultimo offset")?;
-            vec![offsets, unsafe { copy_bytes(ptr_de(2), ultimo, "datos") }?]
-        }
-    };
+/// Bytes de `n` valores de `width` bytes; `n` viene de la frontera, asi que se comprueba.
+fn byte_len(n: usize, width: usize) -> Result<usize, Error> {
+    n.checked_mul(width)
+        .ok_or_else(|| Error::Ffi("valores * ancho desborda".into()))
+}
 
-    let columna = Column::try_new(dtype, length, offset, validity, buffers).map_err(ffi)?;
-    // Con -1 el productor dice "cuentalo tu": ya lo calculo `Column`. Con un valor
-    // concreto, debe coincidir con los bits.
-    if let Ok(declarado) = usize::try_from(array.null_count)
-        && declarado != columna.null_count()
-    {
-        return Err(Error::Ffi(format!(
-            "null_count declarado {declarado}, pero los bits dan {}",
-            columna.null_count()
-        )));
+/// Copia el bitmap de validez. Sin puntero de validez = sin nulos (`None`).
+///
+/// # Safety
+/// Si el puntero de validez no es NULL, debe poder leerse `ceil(end / 8)` bytes.
+unsafe fn copy_validity(array: &ArrowArray, header: &Header) -> Result<Option<Buffer>, Error> {
+    // SAFETY: la cabecera validada garantiza que hay `n_buffers >= 1` punteros.
+    let ptr = unsafe { buffer_ptr(array, 0) };
+    if ptr.is_null() {
+        return Ok(None);
     }
-    Ok(columna)
+    // SAFETY: lee `ceil(end / 8)` bytes, que el contrato de la funcion dice legibles.
+    unsafe { copy_bytes(ptr, header.end.div_ceil(8), "validez") }.map(Some)
+}
+
+/// Copia los buffers de valores segun el tipo.
+///
+/// # Safety
+/// Cada buffer del array debe poder leerse completo para `offset + length` valores
+/// (para `Utf8`, `offset + length + 1` offsets y los bytes que diga el ultimo).
+unsafe fn copy_values(array: &ArrowArray, header: &Header) -> Result<Vec<Buffer>, Error> {
+    let end = header.end;
+    // SAFETY: la cabecera validada garantiza al menos 2 punteros (3 en `Utf8`).
+    let values = unsafe { buffer_ptr(array, 1) };
+    match header.dtype {
+        // SAFETY (los tres `copy_bytes`): contrato de la funcion.
+        DataType::Bool => Ok(vec![unsafe {
+            copy_bytes(values, end.div_ceil(8), "valores")
+        }?]),
+        DataType::Int32 => Ok(vec![unsafe {
+            copy_bytes(values, byte_len(end, I32_WIDTH)?, "valores")
+        }?]),
+        DataType::Int64 | DataType::Float64 => Ok(vec![unsafe {
+            copy_bytes(values, byte_len(end, I64_WIDTH)?, "valores")
+        }?]),
+        // SAFETY: contrato de la funcion.
+        DataType::Utf8 => unsafe { copy_utf8(array, end) },
+    }
+}
+
+/// Copia los offsets y los datos de una columna `Utf8`.
+///
+/// # Safety
+/// Los buffers 1 y 2 deben poder leerse completos: `end + 1` offsets `i32` y los
+/// bytes que indique el ultimo offset.
+unsafe fn copy_utf8(array: &ArrowArray, end: usize) -> Result<Vec<Buffer>, Error> {
+    // Un array vacio puede venir sin offsets: se sintetiza el unico [0].
+    let offsets = if end == 0 {
+        Buffer::from_bytes(&0_i32.to_ne_bytes())?
+    } else {
+        let n = end
+            .checked_add(1)
+            .ok_or_else(|| Error::Ffi("offset + length + 1 desborda".into()))?;
+        // SAFETY: hay al menos 3 punteros (cabecera) y se lee `n` offsets (contrato).
+        unsafe { copy_bytes(buffer_ptr(array, 1), byte_len(n, OFFSET_WIDTH)?, "offsets") }?
+    };
+    // Ya es nuestra copia (alineada), asi que se puede leer como [i32].
+    let last = *offsets
+        .typed::<i32>()?
+        .get(end)
+        .ok_or_else(|| Error::Ffi("faltan offsets".into()))?;
+    let last = non_negative(i64::from(last), "ultimo offset")?;
+    // SAFETY: el ultimo offset describe cuantos bytes de datos hay (contrato).
+    let data = unsafe { copy_bytes(buffer_ptr(array, 2), last, "datos") }?;
+    Ok(vec![offsets, data])
+}
+
+/// Con `-1` el productor dice "cuentalo tu": ya lo calculo `Column`. Con un valor
+/// concreto, debe coincidir con los bits.
+fn check_null_count(declared: i64, column: &Column) -> Result<(), Error> {
+    match usize::try_from(declared) {
+        Ok(declared) if declared != column.null_count() => Err(Error::Ffi(format!(
+            "null_count declarado {declared}, pero los bits dan {}",
+            column.null_count()
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// Columna a partir de un par `ArrowSchema` / `ArrowArray` hoja, copiando los datos.
+/// No libera nada.
+///
+/// # Safety
+/// Los punteros de `schema` y `array` deben ser validos segun la especificacion,
+/// y cada buffer de `array` debe poder leerse completo para `offset + length`.
+unsafe fn column_of(schema: &ArrowSchema, array: &ArrowArray) -> Result<Column, Error> {
+    // SAFETY: contrato de la funcion.
+    let header = unsafe { validate_header(schema, array) }?;
+    // SAFETY: contrato de la funcion; la cabecera ya valido `n_buffers`.
+    let validity = unsafe { copy_validity(array, &header) }?;
+    // SAFETY: igual que arriba.
+    let buffers = unsafe { copy_values(array, &header) }?;
+    let column = Column::try_new(
+        header.dtype,
+        header.length,
+        header.offset,
+        validity,
+        buffers,
+    )
+    .map_err(ffi)?;
+    check_null_count(array.null_count, &column)?;
+    Ok(column)
 }
 
 /// Llama al `release` de `array` si lo tiene; la struct queda en `None`.
