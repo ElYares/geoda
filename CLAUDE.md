@@ -7,6 +7,7 @@
 - Toda implementacion se documenta antes con `/todo`.
 - Commit solo cuando el usuario lo pide.
 - Cuenta personal: `GH_TOKEN=$(gh auth token --user ElYares)`.
+- Idioma: identificadores (variables, funciones, tipos, constantes, archivos) en ingles; comentarios, docs, mensajes de error y commits en espanol. Se aplica al codigo nuevo y al que se toque; sin barridos masivos de renombrado.
 
 ## Contexto del proyecto
 
