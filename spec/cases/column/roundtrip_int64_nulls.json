@@ -1,0 +1,8 @@
+{
+  "spec_version": 1,
+  "id": "column/roundtrip_int64_nulls",
+  "description": "una columna con nulos sobrevive import + export por la capi",
+  "input": { "dtype": "int64", "values": [1, null, 3] },
+  "op": "roundtrip",
+  "expect": { "dtype": "int64", "values": [1, null, 3], "null_count": 1, "len": 3 }
+}

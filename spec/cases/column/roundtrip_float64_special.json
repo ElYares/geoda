@@ -1,0 +1,13 @@
+{
+  "spec_version": 1,
+  "id": "column/roundtrip_float64_special",
+  "description": "NaN, infinitos y -0.0 se conservan bit a bit (comparacion exacta, sin tolerancia)",
+  "input": { "dtype": "float64", "values": [1.5, "NaN", "Infinity", "-Infinity", "-0.0", null] },
+  "op": "roundtrip",
+  "expect": {
+    "dtype": "float64",
+    "values": [1.5, "NaN", "Infinity", "-Infinity", "-0.0", null],
+    "null_count": 1,
+    "len": 6
+  }
+}

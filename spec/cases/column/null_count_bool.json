@@ -1,0 +1,8 @@
+{
+  "spec_version": 1,
+  "id": "column/null_count_bool",
+  "description": "null_count cuenta los nulos de una columna Bool",
+  "input": { "dtype": "bool", "values": [true, null, false, null] },
+  "op": "null_count",
+  "expect": { "null_count": 2 }
+}

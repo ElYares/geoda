@@ -1,0 +1,8 @@
+{
+  "spec_version": 1,
+  "id": "column/roundtrip_utf8_empty_strings",
+  "description": "cadenas vacias, nulos y texto no ASCII: una cadena vacia no es un nulo",
+  "input": { "dtype": "utf8", "values": ["", null, "ñandú", ""] },
+  "op": "roundtrip",
+  "expect": { "dtype": "utf8", "values": ["", null, "ñandú", ""], "null_count": 1, "len": 4 }
+}

@@ -15,5 +15,9 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [dependencies]
 geoda-core = { path = "../core" }
 
+[dev-dependencies]
+# Solo para el runner de `spec/` (D7): nunca en `geoda-core`.
+serde_json = "1"
+
 [lints]
 workspace = true

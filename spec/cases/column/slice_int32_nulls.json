@@ -1,0 +1,9 @@
+{
+  "spec_version": 1,
+  "id": "column/slice_int32_nulls",
+  "description": "un corte recuenta sus propios nulos y exporta solo su ventana",
+  "input": { "dtype": "int32", "values": [10, null, 30, 40, null] },
+  "op": "slice",
+  "args": { "offset": 1, "len": 3 },
+  "expect": { "dtype": "int32", "values": [null, 30, 40], "null_count": 1, "len": 3 }
+}

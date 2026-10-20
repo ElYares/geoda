@@ -1,0 +1,9 @@
+{
+  "spec_version": 1,
+  "id": "column/error_slice_out_of_bounds",
+  "description": "un corte que se sale de la columna es OUT_OF_BOUNDS, no un panic ni un corte parcial",
+  "input": { "dtype": "int32", "values": [1, 2, 3] },
+  "op": "slice",
+  "args": { "offset": 2, "len": 5 },
+  "expect": { "error": "OUT_OF_BOUNDS" }
+}

@@ -42,4 +42,4 @@ jobs:
           components: miri
       - run: cargo miri setup
       - run: "cargo miri test -p geoda-core -- memory:: interop::"
-      - run: cargo miri test -p geoda-capi
+      - run: cargo miri test -p geoda-capi --lib
