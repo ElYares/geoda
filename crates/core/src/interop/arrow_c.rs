@@ -407,6 +407,16 @@ fn ffi(e: Error) -> Error {
     }
 }
 
+/// Bytes de un valor `Int32` y de un `Int64` / `Float64`.
+const I32_WIDTH: usize = 4;
+const I64_WIDTH: usize = 8;
+/// Bytes de cada offset de un `Utf8` (`i32`).
+const OFFSET_WIDTH: usize = I32_WIDTH;
+/// Buffers de un array hoja de ancho fijo (validez y valores) y de un `Utf8`
+/// (validez, offsets y datos).
+const FIXED_BUFFERS: i64 = 2;
+const UTF8_BUFFERS: i64 = 3;
+
 /// Entero de la frontera a `usize`, rechazando negativos.
 fn non_negative(n: i64, que: &str) -> Result<usize, Error> {
     usize::try_from(n).map_err(|_| Error::Ffi(format!("{que} invalido: {n}")))
@@ -530,7 +540,11 @@ unsafe fn column_of(schema: &ArrowSchema, array: &ArrowArray) -> Result<Column, 
         .checked_add(length)
         .ok_or_else(|| Error::Ffi("offset + length desborda".into()))?;
 
-    let esperados: i64 = if dtype == DataType::Utf8 { 3 } else { 2 };
+    let esperados = if dtype == DataType::Utf8 {
+        UTF8_BUFFERS
+    } else {
+        FIXED_BUFFERS
+    };
     if array.n_buffers != esperados || array.buffers.is_null() {
         return Err(Error::Ffi(format!(
             "{dtype:?} lleva {esperados} buffers y llegaron {}",
@@ -549,24 +563,30 @@ unsafe fn column_of(schema: &ArrowSchema, array: &ArrowArray) -> Result<Column, 
         Some(unsafe { copy_bytes(ptr_de(0), bits, "validez") }?)
     };
 
-    let ancho = |w: usize| {
-        end.checked_mul(w)
+    // Bytes de `n` valores de `w` bytes; `n` viene de la frontera, asi que se comprueba.
+    let bytes = |n: usize, w: usize| {
+        n.checked_mul(w)
             .ok_or_else(|| Error::Ffi("valores * ancho desborda".into()))
     };
     // SAFETY (todos los `copy_bytes` de abajo): el contrato de la funcion dice que
     // cada buffer se puede leer completo para `offset + length` valores.
     let buffers = match dtype {
         DataType::Bool => vec![unsafe { copy_bytes(ptr_de(1), bits, "valores") }?],
-        DataType::Int32 => vec![unsafe { copy_bytes(ptr_de(1), ancho(4)?, "valores") }?],
+        DataType::Int32 => {
+            vec![unsafe { copy_bytes(ptr_de(1), bytes(end, I32_WIDTH)?, "valores") }?]
+        }
         DataType::Int64 | DataType::Float64 => {
-            vec![unsafe { copy_bytes(ptr_de(1), ancho(8)?, "valores") }?]
+            vec![unsafe { copy_bytes(ptr_de(1), bytes(end, I64_WIDTH)?, "valores") }?]
         }
         DataType::Utf8 => {
             // Un array vacio puede venir sin offsets: se sintetiza el unico [0].
             let offsets = if end == 0 {
                 Buffer::from_bytes(&0_i32.to_ne_bytes())?
             } else {
-                unsafe { copy_bytes(ptr_de(1), (end + 1) * 4, "offsets") }?
+                let n = end
+                    .checked_add(1)
+                    .ok_or_else(|| Error::Ffi("offset + length + 1 desborda".into()))?;
+                unsafe { copy_bytes(ptr_de(1), bytes(n, OFFSET_WIDTH)?, "offsets") }?
             };
             // Ya es nuestra copia (alineada), asi que se puede leer como [i32].
             let ultimo = *offsets
@@ -589,6 +609,39 @@ unsafe fn column_of(schema: &ArrowSchema, array: &ArrowArray) -> Result<Column, 
             columna.null_count()
         )));
     }
+    Ok(columna)
+}
+
+/// Llama al `release` de `array` si lo tiene; la struct queda en `None`.
+///
+/// # Safety
+/// `array` debe ser valido y su `release` no puede haberse llamado ya.
+unsafe fn release_consumed(array: &mut ArrowArray) {
+    if let Some(release) = array.release {
+        // SAFETY: contrato de la funcion.
+        unsafe { release(array) };
+    }
+}
+
+/// Importa una `Column` desde un `ArrowSchema` y un `ArrowArray` hoja (no struct).
+///
+/// Mismo trato de propiedad que [`import_chunk`]: copia los datos, y si todo sale
+/// bien llama al `release` de `array` (una vez). El `schema` sigue siendo del
+/// llamador. Si falla, devuelve `Err` y **no toma propiedad** de `array`.
+///
+/// # Errors
+/// Los mismos que [`import_chunk`]: [`Error::Unsupported`] y [`Error::Ffi`].
+///
+/// # Safety
+/// Los punteros de `schema` y `array` (y los de sus buffers) deben ser validos
+/// segun la especificacion de la Arrow C Data Interface, y cada buffer debe poder
+/// leerse completo para `offset + length`.
+pub unsafe fn import_column(schema: &ArrowSchema, array: &mut ArrowArray) -> Result<Column, Error> {
+    // SAFETY: contrato de la funcion.
+    let columna = unsafe { column_of(schema, array) }?;
+    // Todo copiado y validado: ahora si, el productor puede soltar lo suyo.
+    // SAFETY: `array` es valido y su `release` aun no se ha llamado (contrato).
+    unsafe { release_consumed(array) };
     Ok(columna)
 }
 
@@ -666,10 +719,8 @@ pub unsafe fn import_chunk(schema: &ArrowSchema, array: &mut ArrowArray) -> Resu
     let chunk = Chunk::try_new(esquema, columnas).map_err(ffi)?;
 
     // Todo copiado y validado: ahora si, el productor puede soltar lo suyo.
-    if let Some(release) = array.release {
-        // SAFETY: `array` es valido y su `release` aun no se ha llamado.
-        unsafe { release(array) };
-    }
+    // SAFETY: `array` es valido y su `release` aun no se ha llamado (contrato).
+    unsafe { release_consumed(array) };
     Ok(chunk)
 }
 
@@ -1098,6 +1149,54 @@ mod tests {
         let r = unsafe { column_of(&s, &a) };
         liberar_schema(s);
         r
+    }
+
+    #[test]
+    fn importar_columna_libera_una_vez_y_si_falla_no() {
+        let datos = [1_i32, 2, 3];
+        let mut ptrs: [*const c_void; 2] = [ptr::null(), datos.as_ptr().cast()];
+        let cuenta = AtomicUsize::new(0);
+        let mut a = hoja(3, 0, 0, &mut ptrs, &cuenta);
+        let mut s = esquema_hoja(DataType::Int32);
+
+        // Esquema que no se entiende: falla y no toma propiedad del array.
+        let formato = s.format;
+        s.format = c"tdD".as_ptr();
+        // SAFETY: structs armadas a mano, validas.
+        assert!(matches!(
+            unsafe { import_column(&s, &mut a) },
+            Err(Error::Unsupported(_))
+        ));
+        assert_eq!(cuenta.load(Ordering::SeqCst), 0, "no se libero");
+        assert!(a.release.is_some());
+
+        s.format = formato;
+        // SAFETY: igual que arriba.
+        let c = unsafe { import_column(&s, &mut a) }.unwrap();
+        assert_eq!(c.values::<i32>().unwrap(), [1, 2, 3]);
+        assert_eq!(cuenta.load(Ordering::SeqCst), 1);
+        assert!(a.release.is_none());
+        liberar_schema(s);
+    }
+
+    #[test]
+    fn utf8_con_longitud_que_desborda_es_ffi_y_no_panic() {
+        let offsets = [0_i32; 2];
+        let mut ptrs: [*const c_void; 3] = [ptr::null(), offsets.as_ptr().cast(), ptr::null()];
+        let s = esquema_hoja(DataType::Utf8);
+        let cuenta = AtomicUsize::new(0);
+        // `end + 1` desborda `usize` si `end` es `i64::MAX` en una plataforma de 64 bits.
+        for (length, offset) in [
+            (i64::MAX, 0),
+            (0, i64::MAX),
+            (i64::MAX / 2 + 1, i64::MAX / 2),
+        ] {
+            let a = hoja(length, 0, offset, &mut ptrs, &cuenta);
+            // SAFETY: la longitud es absurda a proposito; debe rechazarse sin leer.
+            let r = unsafe { column_of(&s, &a) };
+            assert!(r.is_err(), "length={length} offset={offset}: {r:?}");
+        }
+        liberar_schema(s);
     }
 
     #[test]
