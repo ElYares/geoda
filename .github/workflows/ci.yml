@@ -17,8 +17,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      # `geoda-py` necesita un interprete de Python: lo cubre el job `python`.
+      - run: cargo clippy --workspace --exclude geoda-py --all-targets -- -D warnings
+      - run: cargo test --workspace --exclude geoda-py
       - name: geoda-core sin dependencias
         run: test "$(cargo tree -p geoda-core --edges normal,build,dev --prefix none | wc -l)" -eq 1
 
@@ -30,6 +31,36 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install cbindgen --version 0.29.4 --locked
       - run: tests/c/run.sh
+
+  python:
+    # El binding (PyO3 + maturin), el runner de spec por ctypes y el interop con
+    # pyarrow. Falla si algun test de pyarrow se salta: aqui debe correr.
+    runs-on: ubuntu-latest
+    env:
+      # `maturin develop` instala en este entorno virtual.
+      VIRTUAL_ENV: ${{ github.workspace }}/.venv
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: python -m venv .venv
+      - run: .venv/bin/pip install maturin pyarrow
+      - run: cargo build -p geoda-capi
+      - name: binding
+        working-directory: bindings/python
+        run: |
+          ../../.venv/bin/maturin develop
+          ../../.venv/bin/python -c "import geoda; print(geoda.version()); assert geoda.column_len([1, None, 3]) == 3"
+      - run: cargo clippy -p geoda-py --all-targets -- -D warnings
+      - name: runner de spec e interop
+        working-directory: bindings/python
+        run: |
+          ../../.venv/bin/python -m unittest discover -s tests -v 2>&1 | tee out.txt
+          ! grep -q skipped out.txt
 
   miri:
     # Capas con unsafe: Miri detecta lecturas fuera de rango, desalineacion

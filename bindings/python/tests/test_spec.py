@@ -1,0 +1,188 @@
+"""Runner de `spec/` en Python (ver `spec/README.md`).
+
+Recorre `spec/cases/**/*.json` y ejecuta cada caso solo con funciones `geoda_*` de la
+C-API, cargadas por `ctypes`. Hace lo mismo que `crates/capi/tests/spec.rs`: si los dos
+discrepan en un caso, uno de los dos esta mal. Solo usa la biblioteca estandar.
+"""
+
+import json
+import unittest
+
+import capi
+
+SPEC_VERSION = 1
+CASES_DIR = capi.ROOT / "spec" / "cases"
+OPS = ("roundtrip", "len", "null_count", "slice")
+
+
+class CaseFailure(Exception):
+    """El caso no cumple lo que esperaba."""
+
+
+def run_case(case):
+    """Ejecuta un caso. Cualquier cosa inesperada lanza `CaseFailure`, incluida una
+    `op` desconocida: no se salta en silencio."""
+    if case.get("spec_version") != SPEC_VERSION:
+        raise CaseFailure(f"spec_version {case.get('spec_version')!r} no soportada")
+    op, expect = case.get("op"), case.get("expect")
+    if op is None or expect is None:
+        raise CaseFailure("faltan op o expect")
+    if op not in OPS:
+        raise CaseFailure(f"op desconocida: {op!r}")
+
+    column, code = _import(case["input"])
+    result = None
+    try:
+        if code == capi.OK:
+            if op == "slice":
+                args = case.get("args", {})
+                for key in ("offset", "len"):
+                    if not isinstance(args.get(key), int) or args[key] < 0:
+                        raise CaseFailure(f"args.{key} falta o no es un entero >= 0")
+                result, code = column.slice(args["offset"], args["len"])
+            else:
+                result = column
+                column = None  # `result` es el dueno; no se libera dos veces
+        if code != capi.OK:
+            _check_error(expect, code)
+        elif "error" in expect:
+            raise CaseFailure(f"esperaba el error {expect['error']!r}, pero la operacion tuvo exito")
+        else:
+            _check_counts(expect, result)
+            _check_exported(expect, result)
+    finally:
+        for handle in (result, column):
+            if handle is not None:
+                handle.close()
+
+
+def _import(spec_input):
+    schema, array = capi.build_arrow(spec_input["dtype"], spec_input["values"])
+    column, code = capi.from_arrow(schema, array)
+    # El esquema siempre es nuestro; el array solo si la capi no lo consumio.
+    capi.release_exported(schema, array)
+    return column, code
+
+
+def _check_error(expect, code):
+    expected = expect.get("error")
+    if expected is None:
+        raise CaseFailure(f"fallo inesperado: {capi.category(code)} ({capi.last_error()})")
+    if expected != capi.category(code):
+        raise CaseFailure(
+            f"esperaba el error {expected}, salio {capi.category(code)} ({capi.last_error()})"
+        )
+
+
+def _check_counts(expect, handle):
+    actual = {"len": len(handle), "null_count": handle.null_count}
+    for key, value in actual.items():
+        if key in expect and expect[key] != value:
+            raise CaseFailure(f"{key}: esperado {expect[key]!r}, salio {value!r}")
+
+
+def _check_exported(expect, handle):
+    if "dtype" not in expect and "values" not in expect:
+        return
+    schema, array, code = handle.export()
+    if code != capi.OK:
+        raise CaseFailure(f"to_arrow fallo: {capi.category(code)} ({capi.last_error()})")
+    try:
+        dtype, values = capi.read_arrow(schema, array)
+    finally:
+        capi.release_exported(schema, array)
+    if "dtype" in expect and expect["dtype"] != dtype:
+        raise CaseFailure(f"dtype: esperado {expect['dtype']!r}, salio {dtype!r}")
+    if "values" in expect:
+        _check_values(expect["values"], values, dtype)
+
+
+def _check_values(expected, actual, dtype):
+    if len(expected) != len(actual):
+        raise CaseFailure(f"values: esperados {len(expected)}, salieron {len(actual)}")
+    for i, (want, got) in enumerate(zip(expected, actual)):
+        if want is None or got is None:
+            ok = want is None and got is None
+        elif dtype == "float64":
+            ok = capi.same_float(capi.parse_float(want), got)
+        else:
+            ok = want == got
+        if not ok:
+            raise CaseFailure(f"values[{i}]: esperado {want!r}, salio {got!r}")
+
+
+def inline(op, expect, **overrides):
+    """Caso en memoria para probar al propio runner."""
+    case = {
+        "spec_version": 1,
+        "id": "inline",
+        "description": "caso en memoria",
+        "input": {"dtype": "int32", "values": [1, None, 3]},
+        "op": op,
+        "args": {"offset": 0, "len": 9},
+        "expect": expect,
+    }
+    case.update(overrides)
+    return case
+
+
+class SpecCases(unittest.TestCase):
+    def test_all_cases_pass(self):
+        files = sorted(CASES_DIR.rglob("*.json"))
+        self.assertGreaterEqual(len(files), 4, f"se esperaban al menos 4 casos, hay {len(files)}")
+        for path in files:
+            name = path.relative_to(CASES_DIR).as_posix()
+            with self.subTest(case=name):
+                case = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(case["id"], name.removesuffix(".json"), "id distinto de la ruta")
+                run_case(case)
+
+
+class RunnerBehaviour(unittest.TestCase):
+    def test_unknown_op_fails(self):
+        with self.assertRaisesRegex(CaseFailure, "op desconocida"):
+            run_case(inline("explode", {"len": 3}))
+
+    def test_len_op_reports_len(self):
+        run_case(inline("len", {"len": 3}))
+        with self.assertRaises(CaseFailure):
+            run_case(inline("len", {"len": 4}))
+
+    def test_error_passes_only_with_that_category(self):
+        run_case(inline("slice", {"error": "OUT_OF_BOUNDS"}))
+        with self.assertRaisesRegex(CaseFailure, "OUT_OF_BOUNDS"):
+            run_case(inline("slice", {"error": "TYPE_MISMATCH"}))
+
+    def test_error_expected_but_operation_succeeds_fails(self):
+        with self.assertRaisesRegex(CaseFailure, "tuvo exito"):
+            run_case(inline("len", {"error": "FFI"}))
+
+    def test_unsupported_format_is_reported_by_the_capi(self):
+        run_case(
+            inline(
+                "roundtrip",
+                {"error": "UNSUPPORTED"},
+                input={"dtype": "decimal128", "values": [1, 2]},
+            )
+        )
+
+    def test_wrong_spec_version_fails(self):
+        with self.assertRaises(CaseFailure):
+            run_case(inline("len", {"len": 3}, spec_version=2))
+
+    def test_abi_version(self):
+        self.assertEqual(capi.abi_version(), 1)
+
+    def test_import_consumes_array_exactly_once(self):
+        before = capi.array_releases()
+        schema, array = capi.build_arrow("int64", [1, None, 3])
+        column, code = capi.from_arrow(schema, array)
+        self.assertEqual(code, capi.OK)
+        self.assertEqual(capi.array_releases(), before + 1, "la capi debe llamar a release una vez")
+        capi.release_exported(schema, array)  # solo el esquema: el array ya no tiene release
+        self.assertEqual(capi.array_releases(), before + 1)
+        column.close()
+
+
+if __name__ == "__main__":
+    unittest.main()
