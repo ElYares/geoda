@@ -107,6 +107,38 @@ int32_t geoda_column_from_arrow(const struct ArrowSchema *schema,
                                 struct ArrowArray *array,
                                 struct GeodaColumn **out);
 
+// Exporta una columna a la Arrow C Data Interface (formato hoja, no struct).
+//
+// Escribe en `*out_schema` y `*out_array` structs nuevas, sin copiar los datos:
+// comparten memoria con la columna y siguen vivas aunque despues se libere el
+// handle. Quien las reciba debe llamar a `release` de cada una exactamente una
+// vez. El campo se llama `""` y es nullable.
+//
+// Si falla, devuelve un codigo negativo y no escribe en ninguna de las dos.
+//
+// # Safety
+// `column` debe ser un handle valido. `out_schema` y `out_array` deben ser
+// escribibles (su contenido previo se sobrescribe sin leerse). Ninguno puede ser
+// NULL (si lo es, se devuelve un error).
+int32_t geoda_column_to_arrow(const struct GeodaColumn *column,
+                              struct ArrowSchema *out_schema,
+                              struct ArrowArray *out_array);
+
+// Sub-columna `[offset, offset + len)` de `column`, como handle nuevo.
+//
+// No copia los datos (comparte buffers con `column`). Debe liberarse con
+// `geoda_column_free`, en cualquier orden respecto de `column`. Si falla,
+// devuelve un codigo negativo (`GEODA_ERR_OUT_OF_BOUNDS` si el rango se sale) y
+// `*out` queda en NULL.
+//
+// # Safety
+// `column` debe ser un handle valido y `out` debe ser escribible. Ninguno puede
+// ser NULL (si lo es, se devuelve un error).
+int32_t geoda_column_slice(const struct GeodaColumn *column,
+                           size_t offset,
+                           size_t len,
+                           struct GeodaColumn **out);
+
 // Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 // ya no es valido; liberarlo dos veces es comportamiento indefinido.
 //

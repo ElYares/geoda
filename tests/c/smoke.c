@@ -77,6 +77,34 @@ int main(void) {
     /* El import copia y consume el array: ya se libero una vez. */
     CHECK(array.release == NULL);
     CHECK(liberados == 1);
+
+    /* Export: structs nuevas que comparten memoria con la columna; el llamador
+       las libera con su release. */
+    struct ArrowSchema out_schema;
+    struct ArrowArray out_array;
+    CHECK(geoda_column_to_arrow(col, &out_schema, &out_array) == GEODA_OK);
+    CHECK(out_array.length == 3);
+    CHECK(out_array.null_count == 1);
+    CHECK(out_schema.format != NULL && strcmp(out_schema.format, "l") == 0);
+    /* Sigue viva aunque se libere el handle. */
+    geoda_column_free(col);
+    CHECK(out_array.release != NULL);
+    out_array.release(&out_array);
+    out_schema.release(&out_schema);
+    CHECK(out_array.release == NULL);
+
+    /* Slice: [10, NULL, 30] -> [NULL, 30]. */
+    int64_con_un_nulo(&schema, &array);
+    CHECK(geoda_column_from_arrow(&schema, &array, &col) == GEODA_OK);
+    struct GeodaColumn *corte = NULL;
+    CHECK(geoda_column_slice(col, 1, 2, &corte) == GEODA_OK);
+    CHECK(geoda_column_len(corte) == 2);
+    CHECK(geoda_column_null_count(corte) == 1);
+    geoda_column_free(corte);
+    corte = (struct GeodaColumn *)1;
+    CHECK(geoda_column_slice(col, 2, 5, &corte) == GEODA_ERR_OUT_OF_BOUNDS);
+    CHECK(corte == NULL);
+    CHECK(strlen(geoda_last_error_message()) > 0);
     geoda_column_free(col);
     geoda_column_free(NULL); /* no-op */
     schema.release(&schema);
@@ -98,6 +126,8 @@ int main(void) {
     /* Punteros NULL. */
     CHECK(geoda_column_from_arrow(NULL, NULL, &col) == GEODA_ERR_INVALID_ARGUMENT);
     CHECK(geoda_column_len(NULL) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_column_to_arrow(NULL, &schema, &array) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_column_slice(NULL, 0, 0, &corte) == GEODA_ERR_INVALID_ARGUMENT);
 
     if (fallos == 0) {
         puts("smoke: ok");

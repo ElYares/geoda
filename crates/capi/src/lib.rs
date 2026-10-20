@@ -13,8 +13,10 @@ mod error;
 use std::ffi::c_char;
 use std::ptr;
 
-use geoda_core::Column;
-use geoda_core::interop::arrow_c::{ArrowArray, ArrowSchema, import_column};
+use geoda_core::interop::arrow_c::{
+    ArrowArray, ArrowSchema, export_column, export_field, import_column,
+};
+use geoda_core::{Column, Field};
 
 pub use error::{
     GEODA_ERR_ALLOC, GEODA_ERR_FFI, GEODA_ERR_INTERNAL, GEODA_ERR_INVALID_ARGUMENT,
@@ -81,6 +83,88 @@ pub unsafe extern "C" fn geoda_column_from_arrow(
         let columna = unsafe { import_column(schema, array) }?;
         // SAFETY: `out` es escribible (arriba).
         unsafe { *out = Box::into_raw(Box::new(GeodaColumn(columna))) };
+        Ok(())
+    })
+}
+
+/// Exporta una columna a la Arrow C Data Interface (formato hoja, no struct).
+///
+/// Escribe en `*out_schema` y `*out_array` structs nuevas, sin copiar los datos:
+/// comparten memoria con la columna y siguen vivas aunque despues se libere el
+/// handle. Quien las reciba debe llamar a `release` de cada una exactamente una
+/// vez. El campo se llama `""` y es nullable.
+///
+/// Si falla, devuelve un codigo negativo y no escribe en ninguna de las dos.
+///
+/// # Safety
+/// `column` debe ser un handle valido. `out_schema` y `out_array` deben ser
+/// escribibles (su contenido previo se sobrescribe sin leerse). Ninguno puede ser
+/// NULL (si lo es, se devuelve un error).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_to_arrow(
+    column: *const GeodaColumn,
+    out_schema: *mut ArrowSchema,
+    out_array: *mut ArrowArray,
+) -> i32 {
+    guard(|| {
+        if out_schema.is_null() || out_array.is_null() {
+            return Err(invalid_argument("out_schema u out_array es NULL"));
+        }
+        // SAFETY: `as_ref` revisa NULL; la validez del handle es contrato.
+        let Some(GeodaColumn(columna)) = (unsafe { column.as_ref() }) else {
+            return Err(invalid_argument("column es NULL"));
+        };
+        let mut schema = export_field(&Field::new("", columna.dtype(), true))?;
+        let array = match export_column(columna) {
+            Ok(array) => array,
+            Err(e) => {
+                // `ArrowSchema` no tiene `Drop`: hay que soltar lo ya exportado.
+                if let Some(release) = schema.release {
+                    // SAFETY: recien exportado, su `release` no se ha llamado.
+                    unsafe { release(&raw mut schema) };
+                }
+                return Err(e.into());
+            }
+        };
+        // SAFETY: ambos punteros son escribibles (contrato) y no se lee lo previo.
+        unsafe {
+            ptr::write(out_schema, schema);
+            ptr::write(out_array, array);
+        }
+        Ok(())
+    })
+}
+
+/// Sub-columna `[offset, offset + len)` de `column`, como handle nuevo.
+///
+/// No copia los datos (comparte buffers con `column`). Debe liberarse con
+/// `geoda_column_free`, en cualquier orden respecto de `column`. Si falla,
+/// devuelve un codigo negativo (`GEODA_ERR_OUT_OF_BOUNDS` si el rango se sale) y
+/// `*out` queda en NULL.
+///
+/// # Safety
+/// `column` debe ser un handle valido y `out` debe ser escribible. Ninguno puede
+/// ser NULL (si lo es, se devuelve un error).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_slice(
+    column: *const GeodaColumn,
+    offset: usize,
+    len: usize,
+    out: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        if out.is_null() {
+            return Err(invalid_argument("out es NULL"));
+        }
+        // SAFETY: no es NULL (arriba) y el llamador lo garantiza escribible.
+        unsafe { *out = ptr::null_mut() };
+        // SAFETY: `as_ref` revisa NULL; la validez del handle es contrato.
+        let Some(GeodaColumn(columna)) = (unsafe { column.as_ref() }) else {
+            return Err(invalid_argument("column es NULL"));
+        };
+        let corte = columna.slice(offset, len)?;
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { *out = Box::into_raw(Box::new(GeodaColumn(corte))) };
         Ok(())
     })
 }
@@ -251,6 +335,99 @@ mod tests {
         unsafe {
             array.release.unwrap()(&raw mut array);
             schema.release.unwrap()(&raw mut schema);
+        }
+    }
+
+    /// Handle con la columna Int32 `[1, NULL, 3]`.
+    fn handle_de_enteros() -> *mut GeodaColumn {
+        let mut b = PrimitiveBuilder::<i32>::new();
+        b.append(1);
+        b.append_null();
+        b.append(3);
+        Box::into_raw(Box::new(GeodaColumn(b.finish().unwrap())))
+    }
+
+    #[test]
+    fn exportar_y_reimportar_da_la_misma_columna() {
+        let col = handle_de_enteros();
+        // SAFETY: structs vacias, escribibles; `col` es un handle valido.
+        let (mut schema, mut array) = unsafe { (std::mem::zeroed(), std::mem::zeroed()) };
+        let r = unsafe { geoda_column_to_arrow(col, &raw mut schema, &raw mut array) };
+        assert_eq!(r, GEODA_OK, "{}", mensaje());
+        // El export comparte memoria: sobrevive a la liberacion del handle.
+        // SAFETY: `col` valido y no liberado antes.
+        unsafe { geoda_column_free(col) };
+
+        // SAFETY: structs recien exportadas; el import las consume.
+        let c = unsafe { import_column(&schema, &mut array) }.unwrap();
+        assert_eq!(c.len(), 3);
+        assert_eq!(c.null_count(), 1);
+        assert_eq!(c.values::<i32>().unwrap()[2], 3);
+        // SAFETY: `schema` sigue siendo nuestro.
+        unsafe { schema.release.unwrap()(&raw mut schema) };
+    }
+
+    #[test]
+    fn exportar_con_punteros_nulos_es_error() {
+        let col = handle_de_enteros();
+        // SAFETY: NULL se reporta como error; `col` es valido.
+        let (mut schema, mut array) = unsafe { (std::mem::zeroed(), std::mem::zeroed()) };
+        unsafe {
+            assert_eq!(
+                geoda_column_to_arrow(ptr::null(), &raw mut schema, &raw mut array),
+                GEODA_ERR_INVALID_ARGUMENT
+            );
+            assert_eq!(
+                geoda_column_to_arrow(col, ptr::null_mut(), &raw mut array),
+                GEODA_ERR_INVALID_ARGUMENT
+            );
+            assert_eq!(
+                geoda_column_to_arrow(col, &raw mut schema, ptr::null_mut()),
+                GEODA_ERR_INVALID_ARGUMENT
+            );
+            geoda_column_free(col);
+        }
+    }
+
+    #[test]
+    fn slice_valido_y_fuera_de_rango() {
+        let col = handle_de_enteros();
+        let mut out: *mut GeodaColumn = ptr::null_mut();
+        // SAFETY: `col` es un handle valido y `out` es escribible.
+        unsafe {
+            assert_eq!(geoda_column_slice(col, 1, 2, &raw mut out), GEODA_OK);
+            assert_eq!(geoda_column_len(out), 2);
+            assert_eq!(geoda_column_null_count(out), 1);
+            geoda_column_free(out);
+
+            assert_eq!(
+                geoda_column_slice(col, 2, 5, &raw mut out),
+                GEODA_ERR_OUT_OF_BOUNDS
+            );
+            assert!(out.is_null());
+            assert_ne!(mensaje(), "");
+            // `offset + len` desborda: error, no panic.
+            assert_eq!(
+                geoda_column_slice(col, usize::MAX, 2, &raw mut out),
+                GEODA_ERR_OUT_OF_BOUNDS
+            );
+            geoda_column_free(col);
+        }
+    }
+
+    #[test]
+    fn slice_con_punteros_nulos_es_error() {
+        let mut out: *mut GeodaColumn = ptr::null_mut();
+        // SAFETY: NULL se reporta como error.
+        unsafe {
+            assert_eq!(
+                geoda_column_slice(ptr::null(), 0, 0, &raw mut out),
+                GEODA_ERR_INVALID_ARGUMENT
+            );
+            assert_eq!(
+                geoda_column_slice(ptr::null(), 0, 0, ptr::null_mut()),
+                GEODA_ERR_INVALID_ARGUMENT
+            );
         }
     }
 
