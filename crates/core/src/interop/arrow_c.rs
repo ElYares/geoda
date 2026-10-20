@@ -497,7 +497,10 @@ pub unsafe fn import_schema(schema: &ArrowSchema) -> Result<Schema, Error> {
     if n > 0 && schema.children.is_null() {
         return Err(Error::Ffi("children es NULL con hijos declarados".into()));
     }
-    let mut fields = Vec::with_capacity(n);
+    // Sin `with_capacity(n)`: `n` viene de C y no se puede verificar; con un valor
+    // enorme eso entra en panic o aborta el proceso por falta de memoria. El vector
+    // crece a medida que se leen hijos reales.
+    let mut fields = Vec::new();
     for i in 0..n {
         // SAFETY: `children` tiene `n` punteros (contrato de la funcion).
         let child = unsafe { *schema.children.add(i) };
@@ -1388,6 +1391,25 @@ mod tests {
         let s = export_schema(&schema).unwrap();
         // SAFETY: lo acabamos de exportar nosotros.
         assert_eq!(unsafe { import_schema(&s) }.unwrap(), schema);
+        liberar_schema(s);
+    }
+
+    #[test]
+    fn esquema_con_n_children_hostil_es_err_y_no_reserva_ni_entra_en_panic() {
+        // `n_children` llega de C: usarlo como capacidad inicial hacia que un valor
+        // enorme entrara en panic (o abortara el proceso por falta de memoria).
+        // El primer hijo es NULL, asi que se rechaza antes de leer mas alla del arreglo.
+        let mut children: [*mut ArrowSchema; 1] = [ptr::null_mut()];
+        let mut s = esquema_hoja(DataType::Int32);
+        s.format = c"+s".as_ptr();
+        s.n_children = i64::MAX;
+        s.children = children.as_mut_ptr();
+        // SAFETY: structs armadas a mano; el primer hijo NULL corta antes de leer el segundo.
+        let r = unsafe { import_schema(&s) };
+        assert!(matches!(r, Err(Error::Ffi(_))), "{r:?}");
+        s.format = c"i".as_ptr();
+        s.n_children = 0;
+        s.children = ptr::null_mut();
         liberar_schema(s);
     }
 
