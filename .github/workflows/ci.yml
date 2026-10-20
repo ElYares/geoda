@@ -29,7 +29,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install cbindgen --version 0.29.4 --locked
+      # Compilar cbindgen tarda ~1m30s: se cachea el binario por version.
+      - uses: actions/cache@v4
+        id: cbindgen
+        with:
+          path: ~/.cargo/bin/cbindgen
+          key: cbindgen-0.29.4-${{ runner.os }}
+      - if: steps.cbindgen.outputs.cache-hit != 'true'
+        run: cargo install cbindgen --version 0.29.4 --locked
       - run: tests/c/run.sh
 
   python:
