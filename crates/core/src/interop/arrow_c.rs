@@ -438,17 +438,27 @@ unsafe fn c_str<'a>(p: *const c_char, que: &str) -> Result<&'a CStr, Error> {
 /// Copia `nbytes` desde `p` a un `Buffer` propio. Con 0 bytes no toca `p`.
 ///
 /// # Safety
-/// Si `nbytes > 0`, `p` debe ser valido para leer `nbytes` bytes.
+/// Si `nbytes > 0` y `nbytes <= isize::MAX`, `p` debe ser valido para leer `nbytes` bytes.
+/// Un `nbytes` mayor que `isize::MAX` se rechaza sin tocar `p`.
 unsafe fn copy_bytes(p: *const c_void, nbytes: usize, que: &str) -> Result<Buffer, Error> {
     if nbytes == 0 {
         return Buffer::from_bytes(&[]);
+    }
+    // `from_raw_parts` exige `nbytes <= isize::MAX`: un tamano mayor no lo cumple ningun
+    // puntero y, si llega aqui, aborta el proceso (o es UB). Un `length` mentiroso de C
+    // puede producirlo, asi que se rechaza antes de crear el slice.
+    if isize::try_from(nbytes).is_err() {
+        return Err(Error::Ffi(format!(
+            "{que}: {nbytes} bytes exceden el maximo de un slice"
+        )));
     }
     if p.is_null() {
         return Err(Error::Ffi(format!(
             "{que}: puntero NULL pero se esperaban {nbytes} bytes"
         )));
     }
-    // SAFETY: no es NULL y el llamador garantiza `nbytes` bytes legibles. Se lee
+    // SAFETY: no es NULL, `nbytes <= isize::MAX` (arriba) y el llamador garantiza
+    // `nbytes` bytes legibles. Se lee
     // como `u8`, que no exige alineacion: sirve aunque el productor no alinee.
     let bytes = unsafe { std::slice::from_raw_parts(p.cast::<u8>(), nbytes) };
     Buffer::from_bytes(bytes)
@@ -1274,6 +1284,44 @@ mod tests {
             assert!(r.is_err(), "length={length} offset={offset}: {r:?}");
         }
         liberar_schema(s);
+    }
+
+    #[test]
+    fn longitud_que_rebasa_isize_en_bytes_es_ffi_y_no_aborta() {
+        // `length` mentiroso: los bytes caben en `usize` pero no en `isize`, y
+        // `from_raw_parts` abortaria el proceso si llegara a llamarse.
+        let valores = [0_i64; 2];
+        let cuenta = AtomicUsize::new(0);
+        for (dtype, length) in [
+            (DataType::Int64, 1_i64 << 60),
+            (DataType::Float64, 1_i64 << 60),
+            (DataType::Int32, 1_i64 << 61),
+        ] {
+            let mut ptrs: [*const c_void; 2] = [ptr::null(), valores.as_ptr().cast()];
+            let s = esquema_hoja(dtype);
+            let a = hoja(length, 0, 0, &mut ptrs, &cuenta);
+            // SAFETY: la longitud es absurda a proposito; debe rechazarse sin leer.
+            let r = unsafe { column_of(&s, &a) };
+            assert!(
+                matches!(r, Err(Error::Ffi(_))),
+                "{dtype:?} length={length}: {r:?}"
+            );
+            liberar_schema(s);
+        }
+    }
+
+    #[test]
+    fn copy_bytes_rechaza_mas_de_isize_max_sin_tocar_el_puntero() {
+        let dato = 1_u8;
+        let p = ptr::from_ref(&dato).cast::<c_void>();
+        let demasiado = usize::try_from(isize::MAX).unwrap() + 1;
+        // SAFETY: el tamano se rechaza antes de crear ningun slice.
+        let r = unsafe { copy_bytes(p, demasiado, "valores") };
+        assert!(matches!(r, Err(Error::Ffi(m)) if m.contains("exceden")));
+        // Un tamano normal con un puntero valido sigue copiando.
+        // SAFETY: `p` apunta a 1 byte legible.
+        let ok = unsafe { copy_bytes(p, 1, "valores") }.unwrap();
+        assert_eq!(ok.as_slice(), [1]);
     }
 
     #[test]
