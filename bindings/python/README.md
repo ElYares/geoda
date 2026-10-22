@@ -1,7 +1,9 @@
 # geoda (Python)
 
 Binding de Python de geoda: PyO3 sobre `geoda-core`, construido con maturin.
-Fase 0: solo `geoda.version()` y `geoda.column_len(lista)`.
+Hasta ahora: `geoda.version()`, `geoda.column_len(lista)`, `geoda.median(lista)` y
+`geoda.percentile(lista, p)`. En las listas, `None` es un nulo y se ignora; los enteros se
+convierten a `float` (pierden precision sobre 2^53).
 
 ## Desarrollo
 

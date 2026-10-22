@@ -1,0 +1,9 @@
+{
+  "spec_version": 1,
+  "id": "stats/error_percentile_out_of_range",
+  "description": "un percentil fuera de [0, 100] es INVALID_ARGUMENT",
+  "input":  { "dtype": "int64", "values": [1, 2, 3] },
+  "op":     "percentile",
+  "args":   { "p": 100.5 },
+  "expect": { "error": "INVALID_ARGUMENT" }
+}

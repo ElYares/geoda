@@ -139,6 +139,29 @@ int32_t geoda_column_slice(const struct GeodaColumn *column,
                            size_t len,
                            struct GeodaColumn **out);
 
+// Mediana de una columna `Int32`, `Int64` o `Float64`, en `*out`.
+//
+// Los nulos se ignoran. Si algun valor es `NaN`, devuelve `GEODA_OK` con `*out = NaN`
+// (no es un error). Si falla, devuelve un codigo negativo y `*out` no se escribe:
+// `GEODA_ERR_INVALID_ARGUMENT` si la columna no tiene valores validos y
+// `GEODA_ERR_UNSUPPORTED` para `Bool` y `Utf8`.
+//
+// # Safety
+// `column` debe ser un handle valido y `out` debe ser escribible. Ninguno puede ser
+// NULL (si lo es, se devuelve un error).
+int32_t geoda_column_median(const struct GeodaColumn *column, double *out);
+
+// Percentil `p` (en `[0, 100]`, interpolacion lineal tipo 7) de una columna `Int32`,
+// `Int64` o `Float64`, en `*out`.
+//
+// Mismas reglas que `geoda_column_median`; ademas, un `p` fuera de `[0, 100]` (o `NaN`)
+// es `GEODA_ERR_INVALID_ARGUMENT`.
+//
+// # Safety
+// `column` debe ser un handle valido y `out` debe ser escribible. Ninguno puede ser
+// NULL (si lo es, se devuelve un error).
+int32_t geoda_column_percentile(const struct GeodaColumn *column, double p, double *out);
+
 // Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 // ya no es valido; liberarlo dos veces es comportamiento indefinido.
 //

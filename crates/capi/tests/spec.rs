@@ -16,8 +16,8 @@ use geoda::{
     GEODA_ERR_ALLOC, GEODA_ERR_FFI, GEODA_ERR_INTERNAL, GEODA_ERR_INVALID_ARGUMENT,
     GEODA_ERR_LENGTH_MISMATCH, GEODA_ERR_OUT_OF_BOUNDS, GEODA_ERR_PANIC, GEODA_ERR_TYPE_MISMATCH,
     GEODA_ERR_UNSUPPORTED, GEODA_OK, GeodaColumn, geoda_column_free, geoda_column_from_arrow,
-    geoda_column_len, geoda_column_null_count, geoda_column_slice, geoda_column_to_arrow,
-    geoda_last_error_message,
+    geoda_column_len, geoda_column_median, geoda_column_null_count, geoda_column_percentile,
+    geoda_column_slice, geoda_column_to_arrow, geoda_last_error_message,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -312,9 +312,26 @@ fn check_counts(expect: &Value, handle: &Handle) -> CaseResult {
     Ok(())
 }
 
-fn check_expect(expect: &Value, handle: &Handle) -> CaseResult {
-    check_counts(expect, handle)?;
-    check_exported(expect, handle)
+fn check_expect(expect: &Value, outcome: &Outcome) -> CaseResult {
+    match outcome {
+        Outcome::Column(handle) => {
+            if expect.get("value").is_some() {
+                return Err(
+                    "expect.value pide un numero, pero la operacion dio una columna".into(),
+                );
+            }
+            check_counts(expect, handle)?;
+            check_exported(expect, handle)
+        }
+        Outcome::Value(actual) => {
+            let expected = parse_f64(expect.get("value").ok_or("expect.value falta")?)?;
+            if same_f64(expected, *actual) {
+                Ok(())
+            } else {
+                Err(format!("value: esperado {expected:?}, salio {actual:?}"))
+            }
+        }
+    }
 }
 
 /// La operacion fallo con `code`: el caso pasa solo si esperaba esa categoria.
@@ -334,12 +351,35 @@ fn check_error(expect: &Value, code: i32) -> CaseResult {
     }
 }
 
-/// Resultado de una operacion: un handle, o el codigo con el que fallo.
-type OpResult = Result<Handle, i32>;
+/// Lo que produce una operacion: una columna, o un numero (`median`, `percentile`).
+enum Outcome {
+    Column(Handle),
+    Value(f64),
+}
+
+/// Resultado de una operacion, o el codigo con el que fallo.
+type OpResult = Result<Outcome, i32>;
 
 fn run_op(op: &str, case: &Value, handle: Handle) -> Result<OpResult, String> {
     match op {
-        "roundtrip" | "len" | "null_count" => Ok(Ok(handle)),
+        "roundtrip" | "len" | "null_count" => Ok(Ok(Outcome::Column(handle))),
+        "median" | "percentile" => {
+            let mut out = 0.0_f64;
+            // SAFETY: handle valido y `out` escribible.
+            let code = unsafe {
+                if op == "median" {
+                    geoda_column_median(handle.0, &raw mut out)
+                } else {
+                    let p = parse_f64(&case["args"]["p"])?;
+                    geoda_column_percentile(handle.0, p, &raw mut out)
+                }
+            };
+            Ok(if code == GEODA_OK {
+                Ok(Outcome::Value(out))
+            } else {
+                Err(code)
+            })
+        }
         "slice" => {
             let arg = |name: &str| -> Result<usize, String> {
                 case["args"][name]
@@ -352,7 +392,7 @@ fn run_op(op: &str, case: &Value, handle: Handle) -> Result<OpResult, String> {
             // SAFETY: handle valido y `out` escribible.
             let code = unsafe { geoda_column_slice(handle.0, offset, len, &raw mut out) };
             Ok(if code == GEODA_OK {
-                Ok(Handle(out))
+                Ok(Outcome::Column(Handle(out)))
             } else {
                 Err(code)
             })
@@ -379,14 +419,14 @@ fn run_case(case: &Value) -> CaseResult {
         Err(code) => Err(code),
     };
     match result {
-        Ok(handle) if expect.get("error").is_some() => {
-            let _ = handle;
+        Ok(outcome) if expect.get("error").is_some() => {
+            let _ = outcome;
             Err(format!(
                 "esperaba el error {}, pero la operacion tuvo exito",
                 expect["error"]
             ))
         }
-        Ok(handle) => check_expect(expect, &handle),
+        Ok(outcome) => check_expect(expect, &outcome),
         Err(code) => check_error(expect, code),
     }
 }
@@ -501,5 +541,25 @@ fn spec_unsupported_format_is_reported_by_the_capi() {
 fn spec_wrong_spec_version_fails() {
     let mut case = inline("len", &serde_json::json!({ "len": 3 }));
     case["spec_version"] = 2.into();
+    assert!(run_case(&case).is_err());
+}
+
+#[test]
+fn spec_value_is_compared_bit_by_bit() {
+    let case = |value: Value| {
+        let mut c = inline("median", &serde_json::json!({ "value": value }));
+        c["input"]["dtype"] = "int64".into();
+        c["input"]["values"] = serde_json::json!([1, 2, 3, 4]);
+        c
+    };
+    run_case(&case(2.5.into())).unwrap();
+    assert!(run_case(&case(2.0.into())).is_err());
+    assert!(run_case(&case("NaN".into())).is_err());
+}
+
+#[test]
+fn spec_percentile_without_p_fails() {
+    let mut case = inline("percentile", &serde_json::json!({ "value": 1.0 }));
+    case["args"] = serde_json::json!({});
     assert!(run_case(&case).is_err());
 }

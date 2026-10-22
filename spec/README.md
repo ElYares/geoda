@@ -13,9 +13,9 @@ spec/
 └── cases/<grupo>/<caso>.json
 ```
 
-Cada runner recorre `cases/**/*.json`. Hoy hay uno, en Rust
-(`crates/capi/tests/spec.rs`, corre con `cargo test -p geoda-capi spec`); HU-008
-anade el de Python.
+Cada runner recorre `cases/**/*.json`. Hay dos, que deben
+coincidir: uno en Rust (`crates/capi/tests/spec.rs`, corre con
+`cargo test -p geoda-capi spec`) y otro en Python (`bindings/python/tests/test_spec.py`).
 
 ## Formato de un caso
 
@@ -64,6 +64,11 @@ no conozca **hace fallar el caso**, no lo salta.
 | `len` | — | pide la longitud al handle | `expect.len` |
 | `null_count` | — | pide la cuenta de nulos al handle | `expect.null_count` |
 | `slice` | `offset`, `len` | corta `[offset, offset + len)` y exporta el corte | `expect` completo sobre el corte |
+| `median` | — | mediana de la columna (`geoda_column_median`) | `expect.value` |
+| `percentile` | `p` | percentil `p` en `[0, 100]`, tipo 7 (`geoda_column_percentile`) | `expect.value` |
+
+`median` y `percentile` aceptan `int32`, `int64` y `float64`, ignoran los nulos y
+devuelven un `float64`. Un `NaN` en la columna da `NaN` y no es un error.
 
 ### `expect`
 
@@ -71,6 +76,7 @@ Se comprueban solo las claves presentes:
 
 - `dtype`, `values`: sobre la columna que **sale** de la capi (exportada).
 - `len`, `null_count`: sobre el handle resultante.
+- `value`: el `float64` que devuelven `median` y `percentile`. Se compara bit a bit y `NaN` es igual a `NaN`, como el resto de los flotantes; se escribe con los mismos valores especiales.
 - `error`: la operacion debe fallar con esa categoria; si tiene exito, o falla con otra,
   el caso falla. Las categorias son el sufijo de `GEODA_ERR_*` en `geoda.h`:
   `INVALID_ARGUMENT`, `TYPE_MISMATCH`, `LENGTH_MISMATCH`, `OUT_OF_BOUNDS`,

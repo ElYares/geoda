@@ -1,6 +1,6 @@
 [package]
 name = "geoda-py"
-description = "Binding de Python para geoda (PyO3 sobre geoda-core)"
+description = "Binding de Python para geoda (PyO3 sobre geoda-core y geoda-algo)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,6 +13,7 @@ name = "_geoda"
 crate-type = ["cdylib"]
 
 [dependencies]
+geoda-algo = { path = "../../crates/algo" }
 geoda-core = { path = "../../crates/core" }
 pyo3 = "0.30.1"
 

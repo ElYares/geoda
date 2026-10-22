@@ -1,0 +1,9 @@
+{
+  "spec_version": 1,
+  "id": "stats/percentile_float64_extremes",
+  "description": "los percentiles 0 y 100 son el minimo y el maximo, tambien con infinitos",
+  "input":  { "dtype": "float64", "values": ["Infinity", 2.0, "-Infinity"] },
+  "op":     "percentile",
+  "args":   { "p": 0 },
+  "expect": { "value": "-Infinity" }
+}

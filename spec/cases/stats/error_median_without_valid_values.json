@@ -1,0 +1,8 @@
+{
+  "spec_version": 1,
+  "id": "stats/error_median_without_valid_values",
+  "description": "una columna sin valores validos no tiene mediana: INVALID_ARGUMENT",
+  "input":  { "dtype": "int64", "values": [null, null] },
+  "op":     "median",
+  "expect": { "error": "INVALID_ARGUMENT" }
+}

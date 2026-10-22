@@ -12,7 +12,7 @@ import capi
 
 SPEC_VERSION = 1
 CASES_DIR = capi.ROOT / "spec" / "cases"
-OPS = ("roundtrip", "len", "null_count", "slice")
+OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile")
 
 
 class CaseFailure(Exception):
@@ -40,6 +40,13 @@ def run_case(case):
                     if not isinstance(args.get(key), int) or args[key] < 0:
                         raise CaseFailure(f"args.{key} falta o no es un entero >= 0")
                 result, code = column.slice(args["offset"], args["len"])
+            elif op in ("median", "percentile"):
+                if op == "median":
+                    value, code = column.median()
+                else:
+                    if "p" not in case.get("args", {}):
+                        raise CaseFailure("args.p falta")
+                    value, code = column.percentile(capi.parse_float(case["args"]["p"]))
             else:
                 result = column
                 column = None  # `result` es el dueno; no se libera dos veces
@@ -47,6 +54,8 @@ def run_case(case):
             _check_error(expect, code)
         elif "error" in expect:
             raise CaseFailure(f"esperaba el error {expect['error']!r}, pero la operacion tuvo exito")
+        elif op in ("median", "percentile"):
+            _check_value(expect, value)
         else:
             _check_counts(expect, result)
             _check_exported(expect, result)
@@ -72,6 +81,14 @@ def _check_error(expect, code):
         raise CaseFailure(
             f"esperaba el error {expected}, salio {capi.category(code)} ({capi.last_error()})"
         )
+
+
+def _check_value(expect, actual):
+    if "value" not in expect:
+        raise CaseFailure("expect.value falta")
+    want = capi.parse_float(expect["value"])
+    if not capi.same_float(want, actual):
+        raise CaseFailure(f"value: esperado {want!r}, salio {actual!r}")
 
 
 def _check_counts(expect, handle):
@@ -165,6 +182,23 @@ class RunnerBehaviour(unittest.TestCase):
                 input={"dtype": "decimal128", "values": [1, 2]},
             )
         )
+
+    def test_value_is_compared_bit_by_bit(self):
+        def case(value):
+            return inline(
+                "median",
+                {"value": value},
+                input={"dtype": "int64", "values": [1, 2, 3, 4]},
+            )
+
+        run_case(case(2.5))
+        for wrong in (2.0, "NaN"):
+            with self.assertRaises(CaseFailure):
+                run_case(case(wrong))
+
+    def test_percentile_without_p_fails(self):
+        with self.assertRaisesRegex(CaseFailure, "args.p"):
+            run_case(inline("percentile", {"value": 1.0}, args={}))
 
     def test_wrong_spec_version_fails(self):
         with self.assertRaises(CaseFailure):

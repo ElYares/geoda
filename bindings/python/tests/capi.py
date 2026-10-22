@@ -97,6 +97,11 @@ def _load():
         ),
         "geoda_column_len": ([p_handle], ctypes.c_int64),
         "geoda_column_null_count": ([p_handle], ctypes.c_int64),
+        "geoda_column_median": ([p_handle, ctypes.POINTER(ctypes.c_double)], ctypes.c_int32),
+        "geoda_column_percentile": (
+            [p_handle, ctypes.c_double, ctypes.POINTER(ctypes.c_double)],
+            ctypes.c_int32,
+        ),
         "geoda_column_free": ([p_handle], None),
     }
     for name, (argtypes, restype) in signatures.items():
@@ -145,6 +150,18 @@ class Column:
         out = ctypes.c_void_p(None)
         code = LIB.geoda_column_slice(self.handle, offset, length, ctypes.byref(out))
         return (Column(out.value), code) if code == OK else (None, code)
+
+    def median(self):
+        """`(valor, 0)` si sale bien; `(None, codigo)` si la capi falla."""
+        out = ctypes.c_double(0.0)
+        code = LIB.geoda_column_median(self.handle, ctypes.byref(out))
+        return (out.value, code) if code == OK else (None, code)
+
+    def percentile(self, p):
+        """`(valor, 0)` si sale bien; `(None, codigo)` si la capi falla."""
+        out = ctypes.c_double(0.0)
+        code = LIB.geoda_column_percentile(self.handle, p, ctypes.byref(out))
+        return (out.value, code) if code == OK else (None, code)
 
     def export(self):
         """Exporta por `geoda_column_to_arrow`. Devuelve `(schema, array, codigo)`.

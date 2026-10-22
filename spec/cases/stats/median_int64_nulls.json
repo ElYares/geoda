@@ -1,0 +1,8 @@
+{
+  "spec_version": 1,
+  "id": "stats/median_int64_nulls",
+  "description": "la mediana ignora los nulos: sobre [1, 2, 3, 4] vale 2.5",
+  "input":  { "dtype": "int64", "values": [3, null, 1, 4, null, 2] },
+  "op":     "median",
+  "expect": { "value": 2.5 }
+}

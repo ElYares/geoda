@@ -61,7 +61,7 @@ jobs:
         working-directory: bindings/python
         run: |
           ../../.venv/bin/maturin develop
-          ../../.venv/bin/python -c "import geoda; print(geoda.version()); assert geoda.column_len([1, None, 3]) == 3"
+          ../../.venv/bin/python -c "import geoda; print(geoda.version()); assert geoda.column_len([1, None, 3]) == 3; assert geoda.median([3, 1, None, 2]) == 2.0"
       - run: cargo clippy -p geoda-py --all-targets -- -D warnings
       - name: runner de spec e interop
         working-directory: bindings/python

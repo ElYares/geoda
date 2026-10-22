@@ -13,6 +13,7 @@ mod error;
 use std::ffi::c_char;
 use std::ptr;
 
+use geoda_algo::{Method, percentile_column};
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
 };
@@ -165,6 +166,61 @@ pub unsafe extern "C" fn geoda_column_slice(
         let corte = columna.slice(offset, len)?;
         // SAFETY: `out` es escribible (arriba).
         unsafe { *out = Box::into_raw(Box::new(GeodaColumn(corte))) };
+        Ok(())
+    })
+}
+
+/// Mediana de una columna `Int32`, `Int64` o `Float64`, en `*out`.
+///
+/// Los nulos se ignoran. Si algun valor es `NaN`, devuelve `GEODA_OK` con `*out = NaN`
+/// (no es un error). Si falla, devuelve un codigo negativo y `*out` no se escribe:
+/// `GEODA_ERR_INVALID_ARGUMENT` si la columna no tiene valores validos y
+/// `GEODA_ERR_UNSUPPORTED` para `Bool` y `Utf8`.
+///
+/// # Safety
+/// `column` debe ser un handle valido y `out` debe ser escribible. Ninguno puede ser
+/// NULL (si lo es, se devuelve un error).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_median(column: *const GeodaColumn, out: *mut f64) -> i32 {
+    // SAFETY: contrato de la funcion.
+    unsafe { column_percentile(column, 50.0, out) }
+}
+
+/// Percentil `p` (en `[0, 100]`, interpolacion lineal tipo 7) de una columna `Int32`,
+/// `Int64` o `Float64`, en `*out`.
+///
+/// Mismas reglas que `geoda_column_median`; ademas, un `p` fuera de `[0, 100]` (o `NaN`)
+/// es `GEODA_ERR_INVALID_ARGUMENT`.
+///
+/// # Safety
+/// `column` debe ser un handle valido y `out` debe ser escribible. Ninguno puede ser
+/// NULL (si lo es, se devuelve un error).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_percentile(
+    column: *const GeodaColumn,
+    p: f64,
+    out: *mut f64,
+) -> i32 {
+    // SAFETY: contrato de la funcion.
+    unsafe { column_percentile(column, p, out) }
+}
+
+/// Cuerpo comun de `geoda_column_median` y `geoda_column_percentile`.
+///
+/// # Safety
+/// Igual que ellas.
+unsafe fn column_percentile(column: *const GeodaColumn, p: f64, out: *mut f64) -> i32 {
+    guard(|| {
+        if out.is_null() {
+            return Err(invalid_argument("out es NULL"));
+        }
+        // SAFETY: `as_ref` revisa NULL; la validez del handle es contrato.
+        let Some(GeodaColumn(columna)) = (unsafe { column.as_ref() }) else {
+            return Err(invalid_argument("column es NULL"));
+        };
+        let valor = percentile_column(columna, p, Method::default())?;
+        // SAFETY: `out` no es NULL (arriba) y el llamador lo garantiza escribible.
+        unsafe { *out = valor };
         Ok(())
     })
 }
@@ -428,6 +484,67 @@ mod tests {
                 geoda_column_slice(ptr::null(), 0, 0, ptr::null_mut()),
                 GEODA_ERR_INVALID_ARGUMENT
             );
+        }
+    }
+
+    /// Handle con la columna Int64 `[4, NULL, 1, 3, 2]`.
+    fn handle_de_int64() -> *mut GeodaColumn {
+        let mut b = PrimitiveBuilder::<i64>::new();
+        b.append(4);
+        b.append_null();
+        b.append(1);
+        b.append(3);
+        b.append(2);
+        Box::into_raw(Box::new(GeodaColumn(b.finish().unwrap())))
+    }
+
+    #[test]
+    fn mediana_y_percentil_por_puntero_de_salida() {
+        let col = handle_de_int64();
+        let mut out = 0.0_f64;
+        // SAFETY: `col` es un handle valido y `out` es escribible.
+        unsafe {
+            assert_eq!(geoda_column_median(col, &raw mut out), GEODA_OK);
+            assert_eq!(out.to_bits(), 2.5_f64.to_bits());
+            assert_eq!(geoda_column_percentile(col, 25.0, &raw mut out), GEODA_OK);
+            assert_eq!(out.to_bits(), 1.75_f64.to_bits());
+            geoda_column_free(col);
+        }
+    }
+
+    #[test]
+    fn percentil_invalido_no_escribe_out() {
+        let col = handle_de_int64();
+        let mut out = -1.0_f64;
+        // SAFETY: `col` es un handle valido y `out` es escribible.
+        unsafe {
+            for p in [-0.5, 100.5, f64::NAN] {
+                assert_eq!(
+                    geoda_column_percentile(col, p, &raw mut out),
+                    GEODA_ERR_INVALID_ARGUMENT
+                );
+                assert_ne!(mensaje(), "");
+            }
+            geoda_column_free(col);
+        }
+        assert_eq!(out.to_bits(), (-1.0_f64).to_bits());
+    }
+
+    #[test]
+    fn mediana_con_punteros_nulos_es_error() {
+        let col = handle_de_int64();
+        let mut out = 0.0_f64;
+        // SAFETY: NULL se reporta como error; `col` es valido.
+        unsafe {
+            assert_eq!(
+                geoda_column_median(ptr::null(), &raw mut out),
+                GEODA_ERR_INVALID_ARGUMENT
+            );
+            assert_eq!(
+                geoda_column_percentile(col, 50.0, ptr::null_mut()),
+                GEODA_ERR_INVALID_ARGUMENT
+            );
+            geoda_column_free(col);
         }
     }
 

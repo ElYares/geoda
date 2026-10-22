@@ -1,0 +1,8 @@
+{
+  "spec_version": 1,
+  "id": "stats/median_float64_nan",
+  "description": "un NaN en la columna da NaN y no es un error (decision F2)",
+  "input":  { "dtype": "float64", "values": [1.0, "NaN", 3.0] },
+  "op":     "median",
+  "expect": { "value": "NaN" }
+}

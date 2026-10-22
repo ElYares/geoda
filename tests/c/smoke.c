@@ -109,6 +109,25 @@ int main(void) {
     geoda_column_free(NULL); /* no-op */
     schema.release(&schema);
 
+    /* Mediana y percentil: [10, NULL, 30] ignora el nulo. El valor sale por el
+       puntero y el retorno es solo el codigo. */
+    int64_con_un_nulo(&schema, &array);
+    CHECK(geoda_column_from_arrow(&schema, &array, &col) == GEODA_OK);
+    double valor = -1.0;
+    CHECK(geoda_column_median(col, &valor) == GEODA_OK);
+    CHECK(valor == 20.0);
+    CHECK(geoda_column_percentile(col, 25.0, &valor) == GEODA_OK);
+    CHECK(valor == 15.0);
+    /* Si falla, `out` no se toca y hay mensaje. */
+    valor = -1.0;
+    CHECK(geoda_column_percentile(col, 101.0, &valor) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(valor == -1.0);
+    CHECK(strlen(geoda_last_error_message()) > 0);
+    CHECK(geoda_column_median(col, NULL) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_column_median(NULL, &valor) == GEODA_ERR_INVALID_ARGUMENT);
+    geoda_column_free(col);
+    schema.release(&schema);
+
     /* Entrada invalida: formato que geoda no soporta. */
     int64_con_un_nulo(&schema, &array);
     schema.format = "tdD"; /* decimal128 no esta soportado */

@@ -1,0 +1,8 @@
+{
+  "spec_version": 1,
+  "id": "stats/error_median_utf8",
+  "description": "la mediana de texto no esta soportada: UNSUPPORTED",
+  "input":  { "dtype": "utf8", "values": ["a", "b"] },
+  "op":     "median",
+  "expect": { "error": "UNSUPPORTED" }
+}
