@@ -367,11 +367,8 @@ mod tests {
                 );
             }
         }
-        assert!(
-            percentiles_column(&column, &[], Method::default())
-                .unwrap()
-                .is_empty()
-        );
+        let none = percentiles_column(&column, &[], Method::default()).unwrap();
+        assert_eq!(none.len(), 0);
     }
 
     #[test]
