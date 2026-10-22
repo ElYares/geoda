@@ -5,12 +5,14 @@
 
 #![forbid(unsafe_code)]
 
+pub mod hash;
 pub mod heap;
 pub mod percentile;
 pub mod search;
 pub mod select;
 pub mod sort;
 
+pub use hash::{HashTable, Key, Value, ValueCounts, value_counts_column};
 pub use heap::{Heap, top_k, top_k_column};
 pub use percentile::{median_column, percentile_column, percentiles_column};
 pub use search::{lower_bound, lower_bound_column, upper_bound, upper_bound_column};
