@@ -94,6 +94,10 @@ fn median_of_three<T: Copy>(a: T, b: T, c: T, cmp: &impl Fn(&T, &T) -> Ordering)
 
 /// k-esimo menor (desde 0) de `data` con quickselect. Reordena `data` en el proceso.
 ///
+/// Al volver, `data[..k]` son menores o iguales que el resultado y `data[k + 1..]` mayores
+/// o iguales. Los percentiles dependen de esto para seleccionar varias posiciones seguidas
+/// sobre el mismo tramo.
+///
 /// # Errors
 /// [`Error::OutOfBounds`] si `k >= data.len()` (incluye el caso de `data` vacio).
 pub fn quickselect<T: Copy>(
@@ -169,6 +173,10 @@ fn select_by_medians<T: Copy>(data: &mut [T], k: usize, cmp: &impl Fn(&T, &T) ->
 /// k-esimo menor (desde 0) de `data` con mediana de medianas: lineal en el peor caso.
 /// Reordena `data` en el proceso.
 ///
+/// Al volver, `data[..k]` son menores o iguales que el resultado y `data[k + 1..]` mayores
+/// o iguales. Los percentiles dependen de esto para seleccionar varias posiciones seguidas
+/// sobre el mismo tramo.
+///
 /// # Errors
 /// [`Error::OutOfBounds`] si `k >= data.len()` (incluye el caso de `data` vacio).
 pub fn median_of_medians<T: Copy>(
@@ -204,12 +212,8 @@ pub fn select_column(column: &Column, k: usize, method: Method) -> Result<Scalar
     }
 }
 
-fn select_primitive<T: Native>(
-    column: &Column,
-    k: usize,
-    method: Method,
-    cmp: impl Fn(&T, &T) -> Ordering,
-) -> Result<T, Error> {
+/// Valores no nulos de una columna primitiva, en su orden original.
+pub(crate) fn valid_values<T: Native>(column: &Column) -> Result<Vec<T>, Error> {
     let values = column.values::<T>()?;
     let mut valid = Vec::with_capacity(values.len() - column.null_count());
     for (i, &value) in values.iter().enumerate() {
@@ -217,10 +221,30 @@ fn select_primitive<T: Native>(
             valid.push(value);
         }
     }
+    Ok(valid)
+}
+
+/// Despacha al algoritmo de `method`.
+pub(crate) fn select_with<T: Copy>(
+    data: &mut [T],
+    k: usize,
+    method: Method,
+    cmp: impl Fn(&T, &T) -> Ordering,
+) -> Result<T, Error> {
     match method {
-        Method::Quickselect => quickselect(&mut valid, k, cmp),
-        Method::MedianOfMedians => median_of_medians(&mut valid, k, cmp),
+        Method::Quickselect => quickselect(data, k, cmp),
+        Method::MedianOfMedians => median_of_medians(data, k, cmp),
     }
+}
+
+fn select_primitive<T: Native>(
+    column: &Column,
+    k: usize,
+    method: Method,
+    cmp: impl Fn(&T, &T) -> Ordering,
+) -> Result<T, Error> {
+    let mut valid = valid_values::<T>(column)?;
+    select_with(&mut valid, k, method, cmp)
 }
 
 #[cfg(test)]

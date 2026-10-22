@@ -5,8 +5,10 @@
 
 #![forbid(unsafe_code)]
 
+pub mod percentile;
 pub mod select;
 pub mod sort;
 
+pub use percentile::{median_column, percentile_column, percentiles_column};
 pub use select::{Method, Scalar, median_of_medians, quickselect, select_column};
 pub use sort::{merge_sort, sort_column};
