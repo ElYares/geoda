@@ -39,6 +39,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "geoda-stats"
+version = "0.0.0"
+dependencies = [
+ "geoda-algo",
+ "geoda-core",
+]
+
+[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

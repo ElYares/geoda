@@ -1,0 +1,15 @@
+[package]
+name = "geoda-stats"
+description = "Estadistica de geoda: agregados con estado fusionable y troceo determinista"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+geoda-core = { path = "../core" }
+geoda-algo = { path = "../algo" }
+
+[lints]
+workspace = true
