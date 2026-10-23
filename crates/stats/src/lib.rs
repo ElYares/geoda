@@ -9,6 +9,11 @@
 #![forbid(unsafe_code)]
 
 pub mod aggregate;
+pub mod basic;
 
 pub use aggregate::{Aggregate, BLOCK, aggregate, aggregate_with_workers, for_each_valid};
+pub use basic::{
+    Count, Max, Mean, Min, Number, Sum, count_column, max_column, mean_column, min_column,
+    sum_column,
+};
 pub use geoda_algo::{Method, median_column, percentile_column};
