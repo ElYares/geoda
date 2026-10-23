@@ -10,6 +10,7 @@
 
 pub mod aggregate;
 pub mod basic;
+pub mod variance;
 
 pub use aggregate::{Aggregate, BLOCK, aggregate, aggregate_with_workers, for_each_valid};
 pub use basic::{
@@ -17,3 +18,4 @@ pub use basic::{
     sum_column,
 };
 pub use geoda_algo::{Method, median_column, percentile_column};
+pub use variance::{StdDev, Variance, std_dev_column, variance_column};

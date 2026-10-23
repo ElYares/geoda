@@ -28,12 +28,12 @@ pub enum Number {
 
 /// Familia numerica de una columna: `Int32` e `Int64` se tratan igual.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
+pub(crate) enum Kind {
     Int,
     Float,
 }
 
-fn kind_of(dtype: DataType) -> Result<Kind, Error> {
+pub(crate) fn kind_of(dtype: DataType) -> Result<Kind, Error> {
     match dtype {
         DataType::Int32 | DataType::Int64 => Ok(Kind::Int),
         DataType::Float64 => Ok(Kind::Float),
@@ -44,7 +44,7 @@ fn kind_of(dtype: DataType) -> Result<Kind, Error> {
 }
 
 /// Comprueba que el bloque es de la familia que el agregado espera.
-fn check_block(expected: Kind, block: &Column) -> Result<(), Error> {
+pub(crate) fn check_block(expected: Kind, block: &Column) -> Result<(), Error> {
     if kind_of(block.dtype())? == expected {
         Ok(())
     } else {
@@ -56,7 +56,7 @@ fn check_block(expected: Kind, block: &Column) -> Result<(), Error> {
 }
 
 /// Llama a `f` con cada valor valido del bloque, ya convertido a `i64`.
-fn for_each_int(block: &Column, mut f: impl FnMut(i64)) -> Result<(), Error> {
+pub(crate) fn for_each_int(block: &Column, mut f: impl FnMut(i64)) -> Result<(), Error> {
     match block.dtype() {
         DataType::Int32 => for_each_valid::<i32>(block, |v| f(i64::from(v))),
         _ => for_each_valid::<i64>(block, f),
@@ -64,7 +64,7 @@ fn for_each_int(block: &Column, mut f: impl FnMut(i64)) -> Result<(), Error> {
 }
 
 /// Los valores validos del bloque (a lo sumo `BLOCK`), para sumarlos por pares.
-fn valid_floats(block: &Column) -> Result<Vec<f64>, Error> {
+pub(crate) fn valid_floats(block: &Column) -> Result<Vec<f64>, Error> {
     let mut values = Vec::with_capacity(block.len() - block.null_count());
     for_each_valid::<f64>(block, |v| values.push(v))?;
     Ok(values)
@@ -72,7 +72,7 @@ fn valid_floats(block: &Column) -> Result<Vec<f64>, Error> {
 
 /// Suma por pares: parte el tramo a la mitad y suma las dos sumas. Los tramos cortos se
 /// suman en orden, que es lo mas rapido y ya no acumula error apreciable.
-fn pairwise_sum(values: &[f64]) -> f64 {
+pub(crate) fn pairwise_sum(values: &[f64]) -> f64 {
     const SEQUENTIAL: usize = 8;
     if values.len() <= SEQUENTIAL {
         return values.iter().sum();
