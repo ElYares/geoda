@@ -82,39 +82,65 @@ pub fn aggregate_with_workers<A: Aggregate>(
     column: &Column,
     workers: usize,
 ) -> Result<A::Output, Error> {
+    let state = fold_blocks(
+        column.len(),
+        workers,
+        || agg.init(),
+        |offset, len| {
+            let block = column.slice(offset, len)?;
+            let mut state = agg.init();
+            agg.update(&mut state, &block)?;
+            Ok(state)
+        },
+        |left, right| agg.merge(left, right),
+    )?;
+    agg.finalize(state)
+}
+
+/// Parte `len` filas en bloques de [`BLOCK`], calcula el estado de cada uno con `compute`
+/// (que recibe `offset` y largo del bloque) y los fusiona con el arbol fijo. Es el
+/// armazon de [`aggregate_with_workers`], expuesto para agregados que miran mas de una
+/// columna (covarianza). `workers` se reparte los bloques como en esa funcion.
+///
+/// # Errors
+/// [`Error::InvalidArgument`] si `workers` es 0; ademas los de `compute`.
+pub fn fold_blocks<S>(
+    len: usize,
+    workers: usize,
+    init: impl Fn() -> S,
+    compute: impl Fn(usize, usize) -> Result<S, Error>,
+    merge: impl Fn(S, S) -> S,
+) -> Result<S, Error> {
     if workers == 0 {
         return Err(Error::InvalidArgument(
             "se necesita al menos un trabajador".to_string(),
         ));
     }
-    let blocks = column.len().div_ceil(BLOCK);
+    let blocks = len.div_ceil(BLOCK);
     // Cada trabajador deja su estado en la posicion del bloque, no en la suya.
-    let mut states: Vec<Option<A::State>> = (0..blocks).map(|_| None).collect();
+    let mut states: Vec<Option<S>> = (0..blocks).map(|_| None).collect();
     for worker in 0..workers {
         for index in (worker..blocks).step_by(workers) {
             let offset = index * BLOCK;
-            let block = column.slice(offset, BLOCK.min(column.len() - offset))?;
-            let mut state = agg.init();
-            agg.update(&mut state, &block)?;
-            states[index] = Some(state);
+            states[index] = Some(compute(offset, BLOCK.min(len - offset))?);
         }
     }
-    let ordered: Vec<A::State> = states.into_iter().flatten().collect();
-    agg.finalize(merge_tree(agg, ordered))
+    let ordered: Vec<S> = states.into_iter().flatten().collect();
+    Ok(merge_tree(ordered, &init, &merge))
 }
 
 /// Fusiona por niveles, en pares vecinos; un estado impar pasa tal cual al nivel siguiente.
-fn merge_tree<A: Aggregate>(agg: &A, mut level: Vec<A::State>) -> A::State {
+fn merge_tree<S>(mut level: Vec<S>, init: &impl Fn() -> S, merge: &impl Fn(S, S) -> S) -> S {
     while level.len() > 1 {
         let mut next = Vec::with_capacity(level.len().div_ceil(2));
         let mut pending = level.into_iter();
         while let Some(left) = pending.next() {
             next.push(match pending.next() {
-                Some(right) => agg.merge(left, right),
+                Some(right) => merge(left, right),
                 None => left,
             });
         }
         level = next;
     }
-    level.pop().unwrap_or_else(|| agg.init())
+    level.pop().unwrap_or_else(init)
 }
