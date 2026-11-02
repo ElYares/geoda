@@ -1,5 +1,6 @@
 //! Binding de Python para geoda: `version`, `column_len`, `median`, `percentile` y los
-//! estadisticos escalares (`count`, `sum`, `min`, `max`, `mean`, `var`, `std`, `corr`).
+//! estadisticos escalares (`count`, `sum`, `min`, `max`, `mean`, `var`, `std`, `corr`), `histogram`
+//! y `group_aggregate` (la base de `geoda.group_by`).
 //!
 //! Todas las funciones numericas aceptan una lista o cualquier objeto con el protocolo Arrow
 //! `PyCapsule` (`__arrow_c_array__`): `pyarrow`, `polars`, `pandas` con Arrow... (S10). Los
@@ -11,16 +12,17 @@
 // Los macros de PyO3 generan `unsafe`: el binding es frontera, como `capi`.
 #![allow(unsafe_code)]
 
+use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyCapsule;
+use pyo3::types::{PyCapsule, PyDict, PyList};
 
-use geoda_algo::{Method, median_column, percentile_column};
+use geoda_algo::{Method, Value, median_column, percentile_column};
 use geoda_core::interop::arrow_c::{ArrowArray, ArrowSchema, import_column};
 use geoda_core::{Column, DataType, Error, PrimitiveBuilder};
 use geoda_stats::{
-    Number, correlation_columns, count_column, max_column, mean_column, min_column, std_dev_column,
-    sum_column, variance_column,
+    GroupOp, GroupValues, Number, correlation_columns, count_column, group_by, histogram_column,
+    max_column, mean_column, min_column, std_dev_column, sum_column, variance_column,
 };
 
 /// Version de geoda. Todos los crates del workspace comparten version, asi que
@@ -238,6 +240,89 @@ fn corr(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<f64> {
     correlation_columns(&input_column(x)?, &input_column(y)?).map_err(|e| value_error(&e))
 }
 
+/// Histograma de ancho fijo con `bins` cubos iguales. Devuelve un `dict` con `edges`
+/// (`bins + 1` bordes), `counts` y los contadores de lo que no cae en ningun cubo: `below` y
+/// `above` (fuera de `range`), `nulls` y `nans`. Los cubos son `[a, b)` salvo el ultimo, cerrado.
+///
+/// `range` es `(lo, hi)`; por defecto, `[min, max]` de los datos sin contar nulos ni `NaN`.
+///
+/// # Errors
+/// `ValueError` si `bins` es 0, el rango esta invertido o no es finito, o no hay valores
+/// validos y no se dio `range`; `TypeError` como en `median`.
+#[pyfunction]
+#[pyo3(signature = (values, bins, range=None))]
+fn histogram<'py>(
+    py: Python<'py>,
+    values: &Bound<'py, PyAny>,
+    bins: usize,
+    range: Option<(f64, f64)>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let h = histogram_column(&input_column(values)?, bins, range).map_err(|e| value_error(&e))?;
+    let out = PyDict::new(py);
+    out.set_item("edges", h.edges)?;
+    out.set_item("counts", h.counts)?;
+    out.set_item("below", h.below)?;
+    out.set_item("above", h.above)?;
+    out.set_item("nulls", h.nulls)?;
+    out.set_item("nans", h.nans)?;
+    Ok(out)
+}
+
+/// Una clave de grupo como objeto de Python (`None` = el grupo de claves nulas).
+fn key_to_py<'py>(py: Python<'py>, key: Option<&Value>) -> PyResult<Bound<'py, PyAny>> {
+    match key {
+        None => Ok(py.None().into_bound(py)),
+        Some(Value::Bool(v)) => v.into_bound_py_any(py),
+        Some(Value::Int32(v)) => v.into_bound_py_any(py),
+        Some(Value::Int64(v)) => v.into_bound_py_any(py),
+        Some(Value::Float64(v)) => v.into_bound_py_any(py),
+        Some(Value::Utf8(v)) => v.as_str().into_bound_py_any(py),
+    }
+}
+
+/// Agregado por grupo: base de `geoda.group_by(keys).<agg>(values)`. `agg` es `count`, `sum`,
+/// `min`, `max`, `mean`, `var` o `std`. Devuelve `(claves, resultados)`, dos listas del mismo
+/// largo en orden de primera aparicion; el grupo de claves nulas sale como `None`.
+///
+/// # Errors
+/// `ValueError` si `agg` no existe, `keys` y `values` miden distinto, un grupo no tiene valores
+/// validos para `mean`/`min`/`max`/`var`/`std` o `ddof >= n`; `TypeError` como en `median`.
+#[pyfunction]
+#[pyo3(signature = (keys, values, agg, ddof=1))]
+fn group_aggregate<'py>(
+    py: Python<'py>,
+    keys: &Bound<'py, PyAny>,
+    values: &Bound<'py, PyAny>,
+    agg: &str,
+    ddof: usize,
+) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>)> {
+    let op = match agg {
+        "count" => GroupOp::Count,
+        "sum" => GroupOp::Sum,
+        "min" => GroupOp::Min,
+        "max" => GroupOp::Max,
+        "mean" => GroupOp::Mean,
+        "var" => GroupOp::Var,
+        "std" => GroupOp::Std,
+        otro => {
+            return Err(PyValueError::new_err(format!(
+                "agregado desconocido: {otro:?} (count, sum, min, max, mean, var, std)"
+            )));
+        }
+    };
+    let result = group_by(op, ddof, &input_column(keys)?, &input_column(values)?)
+        .map_err(|e| value_error(&e))?;
+    let key_list = PyList::empty(py);
+    for key in &result.keys {
+        key_list.append(key_to_py(py, key.as_ref())?)?;
+    }
+    let value_list = match result.values {
+        GroupValues::Int(v) => PyList::new(py, v)?,
+        GroupValues::Float(v) => PyList::new(py, v)?,
+    };
+    Ok((key_list, value_list))
+}
+
 /// Modulo nativo `geoda._geoda`.
 #[pymodule]
 fn _geoda(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -253,5 +338,7 @@ fn _geoda(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(var, m)?)?;
     m.add_function(wrap_pyfunction!(std_dev, m)?)?;
     m.add_function(wrap_pyfunction!(corr, m)?)?;
+    m.add_function(wrap_pyfunction!(histogram, m)?)?;
+    m.add_function(wrap_pyfunction!(group_aggregate, m)?)?;
     Ok(())
 }

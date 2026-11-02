@@ -1,0 +1,45 @@
+{
+  "spec_version": 1,
+  "id": "stats/group_by_null_key_is_its_own_group",
+  "description": "las claves nulas forman un grupo que sale como nulo (S8)",
+  "input": {
+    "dtype": "utf8",
+    "values": [
+      "a",
+      null,
+      "a",
+      null
+    ]
+  },
+  "op": "group_by",
+  "input2": {
+    "dtype": "int64",
+    "values": [
+      1,
+      10,
+      2,
+      20
+    ]
+  },
+  "args": {
+    "agg": "sum"
+  },
+  "expect": {
+    "columns": [
+      {
+        "dtype": "utf8",
+        "values": [
+          "a",
+          null
+        ]
+      },
+      {
+        "dtype": "int64",
+        "values": [
+          3,
+          30
+        ]
+      }
+    ]
+  }
+}

@@ -3,8 +3,8 @@
 use geoda_algo::Value;
 use geoda_core::{BoolBuilder, Column, Error, PrimitiveBuilder, Utf8Builder};
 use geoda_stats::{
-    Count, Max, Mean, Min, Number, Sum, Variance, group_aggregate, mean_column, sum_column,
-    variance_column,
+    Count, GroupOp, GroupValues, Max, Mean, Min, Number, Sum, Variance, group_aggregate, group_by,
+    mean_column, sum_column, variance_column,
 };
 
 fn ints(values: &[i64]) -> Column {
@@ -255,4 +255,62 @@ fn matches_a_naive_grouping_in_a_thousand_random_cases() {
         assert_eq!(sum.results, expected_sum, "caso {case}");
         assert_eq!(count.results, expected_count, "caso {case}");
     }
+}
+
+#[test]
+fn group_by_gives_ints_for_int_sums_and_floats_for_means() {
+    let (keys, values) = abab();
+    let sum = group_by(GroupOp::Sum, 0, &keys, &values).unwrap();
+    assert_eq!(sum.values, GroupValues::Int(vec![9, 6]));
+    let count = group_by(GroupOp::Count, 0, &keys, &values).unwrap();
+    assert_eq!(count.values, GroupValues::Int(vec![3, 2]));
+    let mean = group_by(GroupOp::Mean, 0, &keys, &values).unwrap();
+    assert_eq!(mean.values, GroupValues::Float(vec![3.0, 3.0]));
+    let var = group_by(GroupOp::Var, 1, &keys, &values).unwrap();
+    assert_eq!(var.values, GroupValues::Float(vec![4.0, 2.0]));
+    let std = group_by(GroupOp::Std, 1, &keys, &values).unwrap();
+    assert_eq!(std.values, GroupValues::Float(vec![2.0, 2.0_f64.sqrt()]));
+}
+
+#[test]
+fn float_sum_by_group_stays_float_even_when_there_are_no_groups() {
+    let empty = group_by(GroupOp::Sum, 0, &ints(&[]), &floats(&[])).unwrap();
+    assert_eq!(empty.values, GroupValues::Float(vec![]));
+    let empty = group_by(GroupOp::Sum, 0, &ints(&[]), &ints(&[])).unwrap();
+    assert_eq!(empty.values, GroupValues::Int(vec![]));
+}
+
+fn floats(values: &[f64]) -> Column {
+    let mut b = PrimitiveBuilder::<f64>::new();
+    for &v in values {
+        b.append(v);
+    }
+    b.finish().unwrap()
+}
+
+#[test]
+fn keys_column_keeps_dtype_nulls_nan_and_signed_zero() {
+    let mut b = PrimitiveBuilder::<f64>::new();
+    b.append(f64::NAN);
+    b.append(-0.0);
+    b.append_null();
+    b.append(0.0);
+    let keys = b.finish().unwrap();
+    let got = group_by(GroupOp::Count, 0, &keys, &ints(&[1, 2, 3, 4])).unwrap();
+    let column = got.keys_column().unwrap();
+    assert_eq!(column.dtype(), geoda_core::DataType::Float64);
+    assert_eq!(column.len(), 4);
+    assert_eq!(column.null_count(), 1);
+    let v = column.values::<f64>().unwrap();
+    assert!(v[0].is_nan());
+    assert_eq!(v[1].to_bits(), (-0.0_f64).to_bits());
+    assert!(column.is_null(2).unwrap());
+    assert_eq!(v[3].to_bits(), 0.0_f64.to_bits());
+
+    let strings = strings(&[Some("x"), None, Some("")]);
+    let got = group_by(GroupOp::Count, 0, &strings, &ints(&[1, 2, 3])).unwrap();
+    let column = got.keys_column().unwrap();
+    assert_eq!(column.dtype(), geoda_core::DataType::Utf8);
+    assert_eq!(column.null_count(), 1);
+    assert_eq!(column.str_value(2).unwrap(), "");
 }

@@ -1,0 +1,46 @@
+{
+  "spec_version": 1,
+  "id": "stats/histogram_float64_nulls_and_nan",
+  "description": "nulos y NaN van a sus contadores y no entran en ningun cubo (S9)",
+  "input": {
+    "dtype": "float64",
+    "values": [
+      1.0,
+      null,
+      "NaN",
+      3.0
+    ]
+  },
+  "op": "histogram",
+  "args": {
+    "n_bins": 2
+  },
+  "expect": {
+    "columns": [
+      {
+        "dtype": "float64",
+        "values": [
+          1.0,
+          2.0,
+          3.0
+        ]
+      },
+      {
+        "dtype": "int64",
+        "values": [
+          1,
+          1
+        ]
+      },
+      {
+        "dtype": "int64",
+        "values": [
+          0,
+          0,
+          1,
+          1
+        ]
+      }
+    ]
+  }
+}

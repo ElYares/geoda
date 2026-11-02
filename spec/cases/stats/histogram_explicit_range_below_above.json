@@ -1,0 +1,52 @@
+{
+  "spec_version": 1,
+  "id": "stats/histogram_explicit_range_below_above",
+  "description": "los valores fuera del rango explicito se cuentan aparte, no se descartan; el maximo del rango cae en el ultimo cubo",
+  "input": {
+    "dtype": "int64",
+    "values": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ]
+  },
+  "op": "histogram",
+  "args": {
+    "n_bins": 2,
+    "range": [
+      2,
+      4
+    ]
+  },
+  "expect": {
+    "columns": [
+      {
+        "dtype": "float64",
+        "values": [
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      {
+        "dtype": "int64",
+        "values": [
+          1,
+          2
+        ]
+      },
+      {
+        "dtype": "int64",
+        "values": [
+          1,
+          2,
+          0,
+          0
+        ]
+      }
+    ]
+  }
+}

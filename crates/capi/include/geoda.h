@@ -43,6 +43,27 @@ struct ArrowArray {
 #endif  // ARROW_C_DATA_INTERFACE
 
 
+// Agregado de `geoda_column_group_by`: valores no nulos.
+#define GEODA_AGG_COUNT 0
+
+// Agregado de `geoda_column_group_by`: suma.
+#define GEODA_AGG_SUM 1
+
+// Agregado de `geoda_column_group_by`: minimo.
+#define GEODA_AGG_MIN 2
+
+// Agregado de `geoda_column_group_by`: maximo.
+#define GEODA_AGG_MAX 3
+
+// Agregado de `geoda_column_group_by`: media.
+#define GEODA_AGG_MEAN 4
+
+// Agregado de `geoda_column_group_by`: varianza (usa `ddof`).
+#define GEODA_AGG_VAR 5
+
+// Agregado de `geoda_column_group_by`: desviacion estandar (usa `ddof`).
+#define GEODA_AGG_STD 6
+
 // Exito.
 #define GEODA_OK 0
 
@@ -266,6 +287,65 @@ int32_t geoda_column_std(const struct GeodaColumn *column, size_t ddof, double *
 // `x`, `y` deben ser handles validos y `out` debe ser escribible. Ninguno puede ser NULL
 // (si lo es, se devuelve un error).
 int32_t geoda_column_corr(const struct GeodaColumn *x, const struct GeodaColumn *y, double *out);
+
+// Histograma de ancho fijo de una columna `Int32`, `Int64` o `Float64`, con `n_bins` cubos
+// iguales. Devuelve **tres columnas nuevas** (S9):
+//
+// - `*out_edges`: `Float64`, `n_bins + 1` bordes. El cubo `i` es `[edges[i], edges[i+1])` y
+//   el ultimo es cerrado.
+// - `*out_counts`: `Int64`, `n_bins` conteos.
+// - `*out_outside`: `Int64`, 4 valores `[below, above, nulls, nans]` (lo que no cae en ningun
+//   cubo se cuenta aparte, no se pierde).
+//
+// Con `has_range` en `true` el rango es `[lo, hi]`; en `false`, `lo` y `hi` se ignoran y el
+// rango es `[min, max]` de los datos (sin contar nulos ni `NaN`). Con `lo == hi` el rango se
+// ensancha a `[lo - 0.5, hi + 0.5]`. Van por valor y no por puntero: asi la funcion no lee
+// memoria del llamador fuera de los handles.
+//
+// Cada columna debe liberarse con `geoda_column_free`. Si falla, devuelve un codigo negativo
+// y los tres `out` quedan en NULL: `GEODA_ERR_INVALID_ARGUMENT` si `n_bins` es 0 o enorme, el
+// rango esta invertido o no es finito, o no hay valores validos y `has_range` es `false`; y
+// `GEODA_ERR_UNSUPPORTED` para `Bool` y `Utf8`.
+//
+// # Safety
+// `column` debe ser un handle valido y los tres `out` deben ser escribibles. Ninguno puede ser
+// NULL (si lo es, se devuelve un error).
+int32_t geoda_column_histogram(const struct GeodaColumn *column,
+                               size_t n_bins,
+                               bool has_range,
+                               double lo,
+                               double hi,
+                               struct GeodaColumn **out_edges,
+                               struct GeodaColumn **out_counts,
+                               struct GeodaColumn **out_outside);
+
+// Agrupa por los valores de `keys` y calcula un agregado de `values` en cada grupo. Devuelve
+// **dos columnas nuevas**:
+//
+// - `*out_keys`: del mismo tipo que `keys`, una fila por grupo en orden de primera aparicion.
+//   Las claves nulas forman su propio grupo (sale como nulo, S8); `NaN` es una sola clave y
+//   `-0.0` y `0.0` son distintas.
+// - `*out_values`: `Int64` para `GEODA_AGG_COUNT` y para suma/minimo/maximo sobre enteros;
+//   `Float64` en los demas casos.
+//
+// `agg` es una de las constantes `GEODA_AGG_*`; `ddof` solo cuenta en `GEODA_AGG_VAR` y
+// `GEODA_AGG_STD`. Los nulos de `values` se ignoran en cada grupo.
+//
+// Cada columna debe liberarse con `geoda_column_free`. Si falla, devuelve un codigo negativo
+// y los dos `out` quedan en NULL: `GEODA_ERR_LENGTH_MISMATCH` si `keys` y `values` miden
+// distinto, `GEODA_ERR_INVALID_ARGUMENT` si `agg` no existe o un grupo no tiene valores
+// validos para `mean`/`min`/`max`/`var`/`std` (o `ddof >= n`), y `GEODA_ERR_UNSUPPORTED` si
+// `values` es `Bool` o `Utf8`.
+//
+// # Safety
+// `keys` y `values` deben ser handles validos y los dos `out` deben ser escribibles. Ninguno
+// puede ser NULL (si lo es, se devuelve un error).
+int32_t geoda_column_group_by(const struct GeodaColumn *keys,
+                              const struct GeodaColumn *values,
+                              int32_t agg,
+                              size_t ddof,
+                              struct GeodaColumn **out_keys,
+                              struct GeodaColumn **out_values);
 
 // Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 // ya no es valido; liberarlo dos veces es comportamiento indefinido.

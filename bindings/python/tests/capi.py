@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[3]
 
 # Codigos de `geoda.h`; el nombre es el sufijo de `GEODA_ERR_*` (ver spec/README.md).
 OK = 0
+# Agregados de `geoda_column_group_by` (los mismos valores que `GEODA_AGG_*` en `geoda.h`).
+AGG = {"count": 0, "sum": 1, "min": 2, "max": 3, "mean": 4, "var": 5, "std": 6}
 CATEGORIES = {
     -1: "INVALID_ARGUMENT",
     -2: "TYPE_MISMATCH",
@@ -116,6 +118,30 @@ def _load():
             [p_handle, p_handle, ctypes.POINTER(ctypes.c_double)],
             ctypes.c_int32,
         ),
+        "geoda_column_histogram": (
+            [
+                p_handle,
+                ctypes.c_size_t,
+                ctypes.c_bool,
+                ctypes.c_double,
+                ctypes.c_double,
+                ctypes.POINTER(p_handle),
+                ctypes.POINTER(p_handle),
+                ctypes.POINTER(p_handle),
+            ],
+            ctypes.c_int32,
+        ),
+        "geoda_column_group_by": (
+            [
+                p_handle,
+                p_handle,
+                ctypes.c_int32,
+                ctypes.c_size_t,
+                ctypes.POINTER(p_handle),
+                ctypes.POINTER(p_handle),
+            ],
+            ctypes.c_int32,
+        ),
         "geoda_column_free": ([p_handle], None),
     }
     # `sum`, `min` y `max` conservan el tipo de la columna: una variante por familia.
@@ -196,6 +222,39 @@ class Column:
         out = ctypes.c_int64(0) if integer else ctypes.c_double(0.0)
         code = getattr(LIB, f"geoda_column_{name}")(self.handle, *args, ctypes.byref(out))
         return (out.value, code) if code == OK else (None, code)
+
+    @staticmethod
+    def _own(outs, code):
+        """Envuelve los handles de los `out`: `([Column, ...], 0)` o `([], codigo)`.
+
+        Comprueba el contrato de la capi: si falla, todos los `out` quedan en NULL; si sale
+        bien, ninguno lo esta.
+        """
+        handles = [out.value for out in outs]
+        if code != OK:
+            if any(handles):
+                raise AssertionError("la capi fallo pero dejo un out sin poner en NULL")
+            return [], code
+        if not all(handles):
+            raise AssertionError("la capi devolvio GEODA_OK con un out NULL")
+        return [Column(h) for h in handles], code
+
+    def histogram(self, n_bins, value_range=None):
+        """`([edges, counts, outside], 0)` o `([], codigo)`. `value_range` = `(lo, hi)` o `None`."""
+        outs = [ctypes.c_void_p(None) for _ in range(3)]
+        lo, hi = value_range if value_range is not None else (0.0, 0.0)
+        code = LIB.geoda_column_histogram(
+            self.handle, n_bins, value_range is not None, lo, hi, *(ctypes.byref(o) for o in outs)
+        )
+        return Column._own(outs, code)
+
+    def group_by(self, values, agg, ddof=0):
+        """`([keys, values], 0)` o `([], codigo)`; `self` son las claves."""
+        outs = [ctypes.c_void_p(None) for _ in range(2)]
+        code = LIB.geoda_column_group_by(
+            self.handle, values.handle, AGG[agg], ddof, *(ctypes.byref(o) for o in outs)
+        )
+        return Column._own(outs, code)
 
     def export(self):
         """Exporta por `geoda_column_to_arrow`. Devuelve `(schema, array, codigo)`.

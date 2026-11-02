@@ -38,7 +38,7 @@ coincidir: uno en Rust (`crates/capi/tests/spec.rs`, corre con
 | `description` | si | que comportamiento fija el caso y por que |
 | `input` | si | la columna de entrada: `dtype` y `values` |
 | `op` | si | la operacion (ver abajo) |
-| `input2` | solo `corr` | la segunda columna, con el mismo formato que `input` |
+| `input2` | `corr`, `group_by` | la segunda columna, con el mismo formato que `input` (en `group_by` son los valores; `input` son las claves) |
 | `args` | segun `op` | parametros de la operacion |
 | `expect` | si | el resultado esperado, o un error |
 
@@ -75,6 +75,8 @@ no conozca **hace fallar el caso**, no lo salta.
 | `var` | `ddof` | varianza con `ddof` grados de libertad restados (`geoda_column_var`) | `expect.value` |
 | `std` | `ddof` | desviacion estandar, `sqrt(var)` (`geoda_column_std`) | `expect.value` |
 | `corr` | — | correlacion de Pearson entre `input` e `input2` (`geoda_column_corr`) | `expect.value` |
+| `histogram` | `n_bins`, `range` (opcional) | histograma de ancho fijo (`geoda_column_histogram`) | `expect.columns` |
+| `group_by` | `agg`, `ddof` (solo `var`/`std`) | agregado de `input2` por los grupos de `input` (`geoda_column_group_by`) | `expect.columns` |
 
 `median` y `percentile` aceptan `int32`, `int64` y `float64`, ignoran los nulos y
 devuelven un `float64`. Un `NaN` en la columna da `NaN` y no es un error.
@@ -101,6 +103,31 @@ devuelven un `float64`. Un `NaN` en la columna da `NaN` y no es un error.
   es `INVALID_ARGUMENT`. El resultado se acota a `[-1, 1]`. Como la capi no tiene
   tolerancias, un caso de `corr` usa datos cuyo resultado es exacto (p. ej. `1`, `-1`).
 
+#### Resultados de varias columnas (fase 2)
+
+`histogram` y `group_by` devuelven **varias columnas nuevas** (handles), no un escalar. La capi
+las entrega por varios `out` en una sola llamada; cada una se exporta por Arrow y se libera con
+`geoda_column_free`. Si la llamada falla, **todos** los `out` quedan en NULL.
+
+- `histogram` (`args.n_bins`; `args.range` = `[lo, hi]` o ausente para `[min, max]`; la capi recibe `has_range`, `lo` y `hi` por valor):
+  1. `edges`: `float64`, `n_bins + 1` bordes. El cubo `i` es `[edges[i], edges[i+1])` y el ultimo es
+     cerrado.
+  2. `counts`: `int64`, `n_bins` conteos.
+  3. `outside`: `int64`, 4 valores `[below, above, nulls, nans]`. Lo que no cae en ningun cubo se
+     cuenta aparte, nunca se pierde (S9).
+  Con `min == max` el rango se ensancha a `[v - 0.5, v + 0.5]`; `n_bins = 0`, un rango invertido o no
+  finito, o ningun valor valido sin rango explicito son `INVALID_ARGUMENT`.
+- `group_by` (`args.agg` = `count`, `sum`, `min`, `max`, `mean`, `var` o `std`; `args.ddof` para
+  `var` y `std`). Las filas de `input` con la misma clave forman un grupo, y el agregado se calcula
+  sobre las filas correspondientes de `input2`:
+  1. `keys`: del **mismo `dtype` que `input`**, una fila por grupo, en orden de primera aparicion. Las
+     claves nulas forman su propio grupo, que sale como nulo (S8). `NaN` es una sola clave y `-0.0` y
+     `0.0` son claves distintas.
+  2. `values`: `int64` para `count` y para `sum`/`min`/`max` sobre enteros; `float64` en los demas
+     casos. Reglas de nulos, `NaN` y errores, las del escalar correspondiente en cada grupo; el error
+     de un grupo aborta la llamada. Largos distintos son `LENGTH_MISMATCH`; `input2` `bool` o `utf8`,
+     `UNSUPPORTED`.
+
 ### `expect`
 
 Se comprueban solo las claves presentes:
@@ -108,6 +135,10 @@ Se comprueban solo las claves presentes:
 - `dtype`, `values`: sobre la columna que **sale** de la capi (exportada).
 - `len`, `null_count`: sobre el handle resultante.
 - `value`: el numero que devuelve la operacion. Un `float64` se compara bit a bit y `NaN` es igual a `NaN`, como el resto de los flotantes; se escribe con los mismos valores especiales. Un resultado entero (`count`, y `sum`/`min`/`max` sobre enteros) se escribe como entero de JSON y se compara exacto.
+- `columns`: solo en `histogram` y `group_by`. Una lista, en el orden de arriba, de objetos con las
+  mismas claves `dtype` y `values` de una columna exportada; se comprueba cada una contra la columna
+  que **sale** de la capi, con la misma comparacion exacta. Tiene que haber tantas entradas como
+  columnas devuelve la operacion.
 - `error`: la operacion debe fallar con esa categoria; si tiene exito, o falla con otra,
   el caso falla. Las categorias son el sufijo de `GEODA_ERR_*` en `geoda.h`:
   `INVALID_ARGUMENT`, `TYPE_MISMATCH`, `LENGTH_MISMATCH`, `OUT_OF_BOUNDS`,

@@ -19,10 +19,11 @@
 
 use geoda_algo::{Value, group_column};
 use geoda_core::memory::Native;
-use geoda_core::{Column, DataType, Error, PrimitiveBuilder};
+use geoda_core::{BoolBuilder, Column, DataType, Error, PrimitiveBuilder, Utf8Builder};
 
 use crate::aggregate::{Aggregate, aggregate};
-use crate::basic::kind_of;
+use crate::basic::{Count, Max, Mean, Min, Number, Sum, kind_of};
+use crate::variance::{StdDev, Variance};
 
 /// Resultado de un agregado por grupo: `keys[g]` y `results[g]` van emparejados.
 #[derive(Debug, Clone, PartialEq)]
@@ -91,4 +92,244 @@ fn take_primitive<T: Native>(column: &Column, rows: &[usize]) -> Result<Column, 
         }
     }
     builder.finish()
+}
+
+// ------------------------------------------------- agregado elegido en tiempo de ejecucion
+
+/// Agregado por grupo elegido por nombre: es lo que usan los bindings, que no pueden
+/// instanciar un tipo generico de Rust.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupOp {
+    /// Valores no nulos.
+    Count,
+    /// Suma.
+    Sum,
+    /// Minimo.
+    Min,
+    /// Maximo.
+    Max,
+    /// Media.
+    Mean,
+    /// Varianza (necesita `ddof`).
+    Var,
+    /// Desviacion estandar (necesita `ddof`).
+    Std,
+}
+
+/// Resultados de un agregado por grupo, con el tipo que corresponde a la operacion.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GroupValues {
+    /// `Count`, y `Sum`/`Min`/`Max` sobre una columna entera.
+    Int(Vec<i64>),
+    /// `Mean`, `Var`, `Std`, y `Sum`/`Min`/`Max` sobre una columna `Float64`.
+    Float(Vec<f64>),
+}
+
+/// Resultado de [`group_by`]: una clave y un valor por grupo.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupResult {
+    /// Tipo de la columna de claves.
+    pub key_dtype: DataType,
+    /// Clave de cada grupo, en orden de primera aparicion; `None` es el grupo de nulos.
+    pub keys: Vec<Option<Value>>,
+    /// Resultado en cada grupo.
+    pub values: GroupValues,
+}
+
+impl GroupResult {
+    /// Columna de claves, del mismo tipo que la de entrada; el grupo de nulos sale como
+    /// nulo. Un `NaN` sale como el `NaN` canonico y `-0.0` conserva su signo.
+    ///
+    /// # Errors
+    /// [`Error::TypeMismatch`] si una clave no es del tipo de la columna (no ocurre con un
+    /// resultado de [`group_by`]).
+    pub fn keys_column(&self) -> Result<Column, Error> {
+        let mismatch = |key: &Value| {
+            Error::TypeMismatch(format!(
+                "la clave {key:?} no es de tipo {:?}",
+                self.key_dtype
+            ))
+        };
+        match self.key_dtype {
+            DataType::Bool => {
+                let mut builder = BoolBuilder::new();
+                for key in &self.keys {
+                    match key {
+                        None => builder.append_null(),
+                        Some(Value::Bool(v)) => builder.append(*v),
+                        Some(other) => return Err(mismatch(other)),
+                    }
+                }
+                builder.finish()
+            }
+            DataType::Int32 => self.primitive_keys(|key| match key {
+                Value::Int32(v) => Some(*v),
+                _ => None,
+            }),
+            DataType::Int64 => self.primitive_keys(|key| match key {
+                Value::Int64(v) => Some(*v),
+                _ => None,
+            }),
+            DataType::Float64 => self.primitive_keys(|key| match key {
+                Value::Float64(v) => Some(*v),
+                _ => None,
+            }),
+            DataType::Utf8 => {
+                let mut builder = Utf8Builder::new();
+                for key in &self.keys {
+                    match key {
+                        None => builder.append_null(),
+                        Some(Value::Utf8(v)) => builder.append(v)?,
+                        Some(other) => return Err(mismatch(other)),
+                    }
+                }
+                builder.finish()
+            }
+        }
+    }
+
+    fn primitive_keys<T: Native>(
+        &self,
+        pick: impl Fn(&Value) -> Option<T>,
+    ) -> Result<Column, Error> {
+        let mut builder = PrimitiveBuilder::<T>::new();
+        for key in &self.keys {
+            match key {
+                None => builder.append_null(),
+                Some(value) => builder.append(pick(value).ok_or_else(|| {
+                    Error::TypeMismatch(format!(
+                        "la clave {value:?} no es de tipo {:?}",
+                        self.key_dtype
+                    ))
+                })?),
+            }
+        }
+        builder.finish()
+    }
+
+    /// Columna de resultados: `Int64` o `Float64` segun [`GroupValues`].
+    ///
+    /// # Errors
+    /// Los del constructor de la columna (no ocurren con un resultado de [`group_by`]).
+    pub fn values_column(&self) -> Result<Column, Error> {
+        match &self.values {
+            GroupValues::Int(values) => {
+                let mut builder = PrimitiveBuilder::<i64>::new();
+                for &v in values {
+                    builder.append(v);
+                }
+                builder.finish()
+            }
+            GroupValues::Float(values) => {
+                let mut builder = PrimitiveBuilder::<f64>::new();
+                for &v in values {
+                    builder.append(v);
+                }
+                builder.finish()
+            }
+        }
+    }
+}
+
+/// Resultado entero de un `Number` (`Sum`/`Min`/`Max` sobre una columna entera).
+fn int_of(number: Number) -> Result<i64, Error> {
+    match number {
+        Number::Int(v) => Ok(v),
+        Number::Float(_) => Err(Error::TypeMismatch(
+            "se esperaba un resultado entero".to_string(),
+        )),
+    }
+}
+
+/// Resultado flotante de un `Number` (`Sum`/`Min`/`Max` sobre una columna `Float64`).
+fn float_of(number: Number) -> Result<f64, Error> {
+    match number {
+        Number::Float(v) => Ok(v),
+        Number::Int(_) => Err(Error::TypeMismatch(
+            "se esperaba un resultado flotante".to_string(),
+        )),
+    }
+}
+
+/// Agrupa por `keys` y calcula `op` sobre `values` en cada grupo. `ddof` solo cuenta en
+/// `Var` y `Std`.
+///
+/// `Sum`, `Min` y `Max` dan enteros si `values` es `Int32` o `Int64` y flotantes si es
+/// `Float64`; `Count` da enteros y el resto flotantes.
+///
+/// # Errors
+/// Los de [`group_aggregate`] y de crear el agregado (p. ej. [`Error::Unsupported`] si
+/// `values` es `Bool` o `Utf8`).
+pub fn group_by(
+    op: GroupOp,
+    ddof: usize,
+    keys: &Column,
+    values: &Column,
+) -> Result<GroupResult, Error> {
+    let dtype = values.dtype();
+    let int_values = matches!(dtype, DataType::Int32 | DataType::Int64);
+    let (group_keys, group_values) = match op {
+        GroupOp::Count => {
+            let got = group_aggregate(&Count::new(dtype)?, keys, values)?;
+            let counts = got
+                .results
+                .iter()
+                .map(|&n| {
+                    i64::try_from(n).map_err(|_| Error::OutOfBounds(format!("{n} no cabe en i64")))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            (got.keys, GroupValues::Int(counts))
+        }
+        GroupOp::Sum => number_values(
+            group_aggregate(&Sum::new(dtype)?, keys, values)?,
+            int_values,
+        )?,
+        GroupOp::Min => number_values(
+            group_aggregate(&Min::new(dtype)?, keys, values)?,
+            int_values,
+        )?,
+        GroupOp::Max => number_values(
+            group_aggregate(&Max::new(dtype)?, keys, values)?,
+            int_values,
+        )?,
+        GroupOp::Mean => {
+            let got = group_aggregate(&Mean::new(dtype)?, keys, values)?;
+            (got.keys, GroupValues::Float(got.results))
+        }
+        GroupOp::Var => {
+            let got = group_aggregate(&Variance::new(dtype, ddof)?, keys, values)?;
+            (got.keys, GroupValues::Float(got.results))
+        }
+        GroupOp::Std => {
+            let got = group_aggregate(&StdDev::new(dtype, ddof)?, keys, values)?;
+            (got.keys, GroupValues::Float(got.results))
+        }
+    };
+    Ok(GroupResult {
+        key_dtype: keys.dtype(),
+        keys: group_keys,
+        values: group_values,
+    })
+}
+
+fn number_values(
+    got: Grouped<Number>,
+    int_values: bool,
+) -> Result<(Vec<Option<Value>>, GroupValues), Error> {
+    let values = if int_values {
+        GroupValues::Int(
+            got.results
+                .into_iter()
+                .map(int_of)
+                .collect::<Result<_, _>>()?,
+        )
+    } else {
+        GroupValues::Float(
+            got.results
+                .into_iter()
+                .map(float_of)
+                .collect::<Result<_, _>>()?,
+        )
+    };
+    Ok((got.keys, values))
 }

@@ -164,6 +164,52 @@ int main(void) {
     geoda_column_free(col);
     schema.release(&schema);
 
+    /* Histograma de [10, NULL, 30] con 2 cubos y rango automatico: devuelve TRES columnas
+       nuevas (bordes, conteos, fuera), todas a liberar. Si falla, los tres `out` son NULL. */
+    int64_con_un_nulo(&schema, &array);
+    CHECK(geoda_column_from_arrow(&schema, &array, &col) == GEODA_OK);
+    struct GeodaColumn *bordes = NULL, *conteos = NULL, *fuera = NULL;
+    CHECK(geoda_column_histogram(col, 2, false, 0.0, 0.0, &bordes, &conteos, &fuera) == GEODA_OK);
+    CHECK(geoda_column_len(bordes) == 3 && geoda_column_len(conteos) == 2);
+    CHECK(geoda_column_len(fuera) == 4);
+    CHECK(geoda_column_min_f64(bordes, &valor) == GEODA_OK && valor == 10.0);
+    CHECK(geoda_column_max_f64(bordes, &valor) == GEODA_OK && valor == 30.0);
+    CHECK(geoda_column_sum_i64(conteos, &entero) == GEODA_OK && entero == 2);
+    CHECK(geoda_column_sum_i64(fuera, &entero) == GEODA_OK && entero == 1); /* un nulo */
+    geoda_column_free(bordes);
+    geoda_column_free(conteos);
+    geoda_column_free(fuera);
+    /* Con rango explicito [0, 20]: el 30 cae fuera (`above`). */
+    CHECK(geoda_column_histogram(col, 2, true, 0.0, 20.0, &bordes, &conteos, &fuera) == GEODA_OK);
+    CHECK(geoda_column_max_i64(fuera, &entero) == GEODA_OK && entero == 1);
+    geoda_column_free(bordes);
+    geoda_column_free(conteos);
+    geoda_column_free(fuera);
+    bordes = conteos = fuera = (struct GeodaColumn *)1;
+    CHECK(geoda_column_histogram(col, 0, false, 0.0, 0.0, &bordes, &conteos, &fuera) ==
+          GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(bordes == NULL && conteos == NULL && fuera == NULL);
+    CHECK(strlen(geoda_last_error_message()) > 0);
+    CHECK(geoda_column_histogram(col, 2, false, 0.0, 0.0, NULL, &conteos, &fuera) ==
+          GEODA_ERR_INVALID_ARGUMENT);
+
+    /* Agregado por grupo: las claves son [10, NULL, 30] y los valores, los mismos. Salen dos
+       columnas nuevas: claves (con el grupo nulo) y resultados. */
+    struct GeodaColumn *claves = NULL, *resultados = NULL;
+    CHECK(geoda_column_group_by(col, col, GEODA_AGG_SUM, 0, &claves, &resultados) == GEODA_OK);
+    CHECK(geoda_column_len(claves) == 3 && geoda_column_null_count(claves) == 1);
+    CHECK(geoda_column_sum_i64(resultados, &entero) == GEODA_OK && entero == 40);
+    geoda_column_free(claves);
+    geoda_column_free(resultados);
+    claves = resultados = (struct GeodaColumn *)1;
+    CHECK(geoda_column_group_by(col, col, 99, 0, &claves, &resultados) ==
+          GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(claves == NULL && resultados == NULL);
+    CHECK(geoda_column_group_by(col, NULL, GEODA_AGG_SUM, 0, &claves, &resultados) ==
+          GEODA_ERR_INVALID_ARGUMENT);
+    geoda_column_free(col);
+    schema.release(&schema);
+
     /* Entrada invalida: formato que geoda no soporta. */
     int64_con_un_nulo(&schema, &array);
     schema.format = "tdD"; /* decimal128 no esta soportado */

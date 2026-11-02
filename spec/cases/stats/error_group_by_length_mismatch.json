@@ -1,0 +1,27 @@
+{
+  "spec_version": 1,
+  "id": "stats/error_group_by_length_mismatch",
+  "description": "claves y valores de distinto largo: LENGTH_MISMATCH",
+  "input": {
+    "dtype": "int64",
+    "values": [
+      1,
+      2,
+      3
+    ]
+  },
+  "op": "group_by",
+  "input2": {
+    "dtype": "int64",
+    "values": [
+      1,
+      2
+    ]
+  },
+  "args": {
+    "agg": "sum"
+  },
+  "expect": {
+    "error": "LENGTH_MISMATCH"
+  }
+}

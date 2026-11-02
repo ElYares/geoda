@@ -1,0 +1,26 @@
+{
+  "spec_version": 1,
+  "id": "stats/error_group_by_all_null_group_mean",
+  "description": "un grupo con todos los valores nulos hace fallar mean: INVALID_ARGUMENT",
+  "input": {
+    "dtype": "utf8",
+    "values": [
+      "a",
+      "b"
+    ]
+  },
+  "op": "group_by",
+  "input2": {
+    "dtype": "int64",
+    "values": [
+      1,
+      null
+    ]
+  },
+  "args": {
+    "agg": "mean"
+  },
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

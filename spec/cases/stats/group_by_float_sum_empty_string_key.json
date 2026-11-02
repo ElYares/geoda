@@ -1,0 +1,43 @@
+{
+  "spec_version": 1,
+  "id": "stats/group_by_float_sum_empty_string_key",
+  "description": "la cadena vacia es un grupo mas; la suma de float64 sale float64",
+  "input": {
+    "dtype": "utf8",
+    "values": [
+      "",
+      "x",
+      ""
+    ]
+  },
+  "op": "group_by",
+  "input2": {
+    "dtype": "float64",
+    "values": [
+      1.5,
+      2.0,
+      3.0
+    ]
+  },
+  "args": {
+    "agg": "sum"
+  },
+  "expect": {
+    "columns": [
+      {
+        "dtype": "utf8",
+        "values": [
+          "",
+          "x"
+        ]
+      },
+      {
+        "dtype": "float64",
+        "values": [
+          4.5,
+          2.0
+        ]
+      }
+    ]
+  }
+}

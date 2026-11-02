@@ -1,0 +1,45 @@
+{
+  "spec_version": 1,
+  "id": "stats/histogram_equal_values_widen_range",
+  "description": "con min == max el rango se ensancha a [v - 0.5, v + 0.5] y no se divide por cero",
+  "input": {
+    "dtype": "int64",
+    "values": [
+      7,
+      7,
+      7
+    ]
+  },
+  "op": "histogram",
+  "args": {
+    "n_bins": 2
+  },
+  "expect": {
+    "columns": [
+      {
+        "dtype": "float64",
+        "values": [
+          6.5,
+          7.0,
+          7.5
+        ]
+      },
+      {
+        "dtype": "int64",
+        "values": [
+          0,
+          3
+        ]
+      },
+      {
+        "dtype": "int64",
+        "values": [
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    ]
+  }
+}

@@ -17,10 +17,10 @@ use geoda_algo::{Method, percentile_column};
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
 };
-use geoda_core::{Column, Error, Field};
+use geoda_core::{Column, Error, Field, PrimitiveBuilder};
 use geoda_stats::{
-    Number, correlation_columns, count_column, max_column, mean_column, min_column, std_dev_column,
-    sum_column, variance_column,
+    GroupOp, Number, correlation_columns, count_column, group_by, histogram_column, max_column,
+    mean_column, min_column, std_dev_column, sum_column, variance_column,
 };
 
 pub use error::{
@@ -35,8 +35,42 @@ const ABI_MAJOR: u32 = 0;
 /// Version menor de la ABI.
 const ABI_MINOR: u32 = 1;
 
+/// Agregado de `geoda_column_group_by`: valores no nulos.
+pub const GEODA_AGG_COUNT: i32 = 0;
+/// Agregado de `geoda_column_group_by`: suma.
+pub const GEODA_AGG_SUM: i32 = 1;
+/// Agregado de `geoda_column_group_by`: minimo.
+pub const GEODA_AGG_MIN: i32 = 2;
+/// Agregado de `geoda_column_group_by`: maximo.
+pub const GEODA_AGG_MAX: i32 = 3;
+/// Agregado de `geoda_column_group_by`: media.
+pub const GEODA_AGG_MEAN: i32 = 4;
+/// Agregado de `geoda_column_group_by`: varianza (usa `ddof`).
+pub const GEODA_AGG_VAR: i32 = 5;
+/// Agregado de `geoda_column_group_by`: desviacion estandar (usa `ddof`).
+pub const GEODA_AGG_STD: i32 = 6;
+
 /// Columna de geoda. Opaca para C: solo se maneja por puntero.
 pub struct GeodaColumn(Column);
+
+/// Entrega una columna a C como handle nuevo.
+fn into_handle(column: Column) -> *mut GeodaColumn {
+    Box::into_raw(Box::new(GeodaColumn(column)))
+}
+
+/// Columna `Int64` con los valores dados.
+fn int64_column(values: &[i64]) -> Result<Column, Error> {
+    let mut builder = PrimitiveBuilder::<i64>::new();
+    for &v in values {
+        builder.append(v);
+    }
+    builder.finish()
+}
+
+/// Un contador de Rust como `i64`.
+fn to_i64(n: usize) -> Result<i64, Error> {
+    i64::try_from(n).map_err(|_| Error::OutOfBounds(format!("{n} no cabe en i64")))
+}
 
 /// Version de la ABI como `major << 16 | minor`. Mientras la ABI no se congele
 /// (fase 8) cualquier cambio puede romperla, incluso con el mismo `major`.
@@ -444,6 +478,151 @@ pub unsafe extern "C" fn geoda_column_corr(
     unsafe { scalar(x, out, |c| correlation_columns(c, other)) }
 }
 
+/// Histograma de ancho fijo de una columna `Int32`, `Int64` o `Float64`, con `n_bins` cubos
+/// iguales. Devuelve **tres columnas nuevas** (S9):
+///
+/// - `*out_edges`: `Float64`, `n_bins + 1` bordes. El cubo `i` es `[edges[i], edges[i+1])` y
+///   el ultimo es cerrado.
+/// - `*out_counts`: `Int64`, `n_bins` conteos.
+/// - `*out_outside`: `Int64`, 4 valores `[below, above, nulls, nans]` (lo que no cae en ningun
+///   cubo se cuenta aparte, no se pierde).
+///
+/// Con `has_range` en `true` el rango es `[lo, hi]`; en `false`, `lo` y `hi` se ignoran y el
+/// rango es `[min, max]` de los datos (sin contar nulos ni `NaN`). Con `lo == hi` el rango se
+/// ensancha a `[lo - 0.5, hi + 0.5]`. Van por valor y no por puntero: asi la funcion no lee
+/// memoria del llamador fuera de los handles.
+///
+/// Cada columna debe liberarse con `geoda_column_free`. Si falla, devuelve un codigo negativo
+/// y los tres `out` quedan en NULL: `GEODA_ERR_INVALID_ARGUMENT` si `n_bins` es 0 o enorme, el
+/// rango esta invertido o no es finito, o no hay valores validos y `has_range` es `false`; y
+/// `GEODA_ERR_UNSUPPORTED` para `Bool` y `Utf8`.
+///
+/// # Safety
+/// `column` debe ser un handle valido y los tres `out` deben ser escribibles. Ninguno puede ser
+/// NULL (si lo es, se devuelve un error).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_histogram(
+    column: *const GeodaColumn,
+    n_bins: usize,
+    has_range: bool,
+    lo: f64,
+    hi: f64,
+    out_edges: *mut *mut GeodaColumn,
+    out_counts: *mut *mut GeodaColumn,
+    out_outside: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        if out_edges.is_null() || out_counts.is_null() || out_outside.is_null() {
+            return Err(invalid_argument("un out es NULL"));
+        }
+        // SAFETY: no son NULL (arriba) y el llamador los garantiza escribibles.
+        unsafe {
+            *out_edges = ptr::null_mut();
+            *out_counts = ptr::null_mut();
+            *out_outside = ptr::null_mut();
+        }
+        // SAFETY: `as_ref` revisa NULL; la validez del handle es contrato.
+        let Some(GeodaColumn(columna)) = (unsafe { column.as_ref() }) else {
+            return Err(invalid_argument("column es NULL"));
+        };
+        let h = histogram_column(columna, n_bins, has_range.then_some((lo, hi)))?;
+        // Todo lo que puede fallar va antes de escribir ningun `out`: o salen las tres o ninguna.
+        let mut edges = PrimitiveBuilder::<f64>::new();
+        for &edge in &h.edges {
+            edges.append(edge);
+        }
+        let counts = h
+            .counts
+            .iter()
+            .map(|&n| to_i64(n))
+            .collect::<Result<Vec<_>, _>>()?;
+        let outside = [
+            to_i64(h.below)?,
+            to_i64(h.above)?,
+            to_i64(h.nulls)?,
+            to_i64(h.nans)?,
+        ];
+        let (edges, counts, outside) = (
+            edges.finish()?,
+            int64_column(&counts)?,
+            int64_column(&outside)?,
+        );
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_edges = into_handle(edges);
+            *out_counts = into_handle(counts);
+            *out_outside = into_handle(outside);
+        }
+        Ok(())
+    })
+}
+
+/// Agrupa por los valores de `keys` y calcula un agregado de `values` en cada grupo. Devuelve
+/// **dos columnas nuevas**:
+///
+/// - `*out_keys`: del mismo tipo que `keys`, una fila por grupo en orden de primera aparicion.
+///   Las claves nulas forman su propio grupo (sale como nulo, S8); `NaN` es una sola clave y
+///   `-0.0` y `0.0` son distintas.
+/// - `*out_values`: `Int64` para `GEODA_AGG_COUNT` y para suma/minimo/maximo sobre enteros;
+///   `Float64` en los demas casos.
+///
+/// `agg` es una de las constantes `GEODA_AGG_*`; `ddof` solo cuenta en `GEODA_AGG_VAR` y
+/// `GEODA_AGG_STD`. Los nulos de `values` se ignoran en cada grupo.
+///
+/// Cada columna debe liberarse con `geoda_column_free`. Si falla, devuelve un codigo negativo
+/// y los dos `out` quedan en NULL: `GEODA_ERR_LENGTH_MISMATCH` si `keys` y `values` miden
+/// distinto, `GEODA_ERR_INVALID_ARGUMENT` si `agg` no existe o un grupo no tiene valores
+/// validos para `mean`/`min`/`max`/`var`/`std` (o `ddof >= n`), y `GEODA_ERR_UNSUPPORTED` si
+/// `values` es `Bool` o `Utf8`.
+///
+/// # Safety
+/// `keys` y `values` deben ser handles validos y los dos `out` deben ser escribibles. Ninguno
+/// puede ser NULL (si lo es, se devuelve un error).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_group_by(
+    keys: *const GeodaColumn,
+    values: *const GeodaColumn,
+    agg: i32,
+    ddof: usize,
+    out_keys: *mut *mut GeodaColumn,
+    out_values: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        if out_keys.is_null() || out_values.is_null() {
+            return Err(invalid_argument("un out es NULL"));
+        }
+        // SAFETY: no son NULL (arriba) y el llamador los garantiza escribibles.
+        unsafe {
+            *out_keys = ptr::null_mut();
+            *out_values = ptr::null_mut();
+        }
+        // SAFETY: `as_ref` revisa NULL; la validez de los handles es contrato.
+        let (Some(GeodaColumn(keys)), Some(GeodaColumn(values))) =
+            (unsafe { keys.as_ref() }, unsafe { values.as_ref() })
+        else {
+            return Err(invalid_argument("keys o values es NULL"));
+        };
+        let op = match agg {
+            GEODA_AGG_COUNT => GroupOp::Count,
+            GEODA_AGG_SUM => GroupOp::Sum,
+            GEODA_AGG_MIN => GroupOp::Min,
+            GEODA_AGG_MAX => GroupOp::Max,
+            GEODA_AGG_MEAN => GroupOp::Mean,
+            GEODA_AGG_VAR => GroupOp::Var,
+            GEODA_AGG_STD => GroupOp::Std,
+            otro => return Err(invalid_argument(&format!("agg desconocido: {otro}"))),
+        };
+        let result = group_by(op, ddof, keys, values)?;
+        let (key_column, value_column) = (result.keys_column()?, result.values_column()?);
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_keys = into_handle(key_column);
+            *out_values = into_handle(value_column);
+        }
+        Ok(())
+    })
+}
+
 /// Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 /// ya no es valido; liberarlo dos veces es comportamiento indefinido.
 ///
@@ -842,6 +1021,109 @@ mod tests {
             geoda_column_free(col);
         }
         assert!((out - 1.0).abs() < 1e-12, "{out}");
+    }
+
+    #[test]
+    fn histograma_devuelve_tres_columnas() {
+        let col = handle_de_int64();
+        let (mut edges, mut counts, mut outside) =
+            (ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
+        // SAFETY: `col` es un handle valido y los tres `out` son escribibles.
+        unsafe {
+            assert_eq!(
+                geoda_column_histogram(
+                    col,
+                    2,
+                    false,
+                    0.0,
+                    0.0,
+                    &raw mut edges,
+                    &raw mut counts,
+                    &raw mut outside
+                ),
+                GEODA_OK
+            );
+            // Valores validos [4, 1, 3, 2]; rango [1, 4]; cubos [1, 2.5) y [2.5, 4].
+            assert_eq!((*edges).0.len(), 3);
+            assert_eq!((*counts).0.values::<i64>().unwrap(), &[2, 2]);
+            assert_eq!((*outside).0.values::<i64>().unwrap(), &[0, 0, 1, 0]);
+            for handle in [edges, counts, outside] {
+                geoda_column_free(handle);
+            }
+        }
+    }
+
+    #[test]
+    fn histograma_invalido_deja_los_tres_out_en_null() {
+        let col = handle_de_int64();
+        let bogus = ptr::dangling_mut::<GeodaColumn>();
+        let (mut edges, mut counts, mut outside) = (bogus, bogus, bogus);
+        // SAFETY: `col` es un handle valido y los tres `out` son escribibles.
+        unsafe {
+            assert_eq!(
+                geoda_column_histogram(
+                    col,
+                    0,
+                    false,
+                    0.0,
+                    0.0,
+                    &raw mut edges,
+                    &raw mut counts,
+                    &raw mut outside
+                ),
+                GEODA_ERR_INVALID_ARGUMENT
+            );
+            assert!(edges.is_null() && counts.is_null() && outside.is_null());
+            assert_ne!(mensaje(), "");
+            assert_eq!(
+                geoda_column_histogram(
+                    col,
+                    2,
+                    false,
+                    0.0,
+                    0.0,
+                    ptr::null_mut(),
+                    &raw mut counts,
+                    &raw mut outside
+                ),
+                GEODA_ERR_INVALID_ARGUMENT
+            );
+            geoda_column_free(col);
+        }
+    }
+
+    #[test]
+    fn agrupar_devuelve_claves_y_valores() {
+        let keys = handle_de_int64();
+        let values = handle_de_int64();
+        let (mut out_keys, mut out_values) = (ptr::null_mut(), ptr::null_mut());
+        // SAFETY: handles validos y `out` escribibles.
+        unsafe {
+            assert_eq!(
+                geoda_column_group_by(
+                    keys,
+                    values,
+                    GEODA_AGG_SUM,
+                    0,
+                    &raw mut out_keys,
+                    &raw mut out_values
+                ),
+                GEODA_OK
+            );
+            // Claves [4, NULL, 1, 3, 2]: cinco grupos, el nulo incluido.
+            assert_eq!((*out_keys).0.len(), 5);
+            assert_eq!((*out_keys).0.null_count(), 1);
+            assert_eq!((*out_values).0.values::<i64>().unwrap(), &[4, 0, 1, 3, 2]);
+            geoda_column_free(out_keys);
+            geoda_column_free(out_values);
+            assert_eq!(
+                geoda_column_group_by(keys, values, 99, 0, &raw mut out_keys, &raw mut out_values),
+                GEODA_ERR_INVALID_ARGUMENT
+            );
+            assert!(out_keys.is_null() && out_values.is_null());
+            geoda_column_free(keys);
+            geoda_column_free(values);
+        }
     }
 
     #[test]

@@ -1,0 +1,43 @@
+{
+  "spec_version": 1,
+  "id": "stats/group_by_mean_is_float64",
+  "description": "la media por grupo sale float64 aunque los valores sean enteros; las claves conservan int32",
+  "input": {
+    "dtype": "int32",
+    "values": [
+      1,
+      2,
+      1
+    ]
+  },
+  "op": "group_by",
+  "input2": {
+    "dtype": "int64",
+    "values": [
+      1,
+      2,
+      4
+    ]
+  },
+  "args": {
+    "agg": "mean"
+  },
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int32",
+        "values": [
+          1,
+          2
+        ]
+      },
+      {
+        "dtype": "float64",
+        "values": [
+          2.5,
+          2.0
+        ]
+      }
+    ]
+  }
+}

@@ -13,7 +13,8 @@ import capi
 SPEC_VERSION = 1
 CASES_DIR = capi.ROOT / "spec" / "cases"
 SCALAR_OPS = ("count", "sum", "min", "max", "mean", "var", "std", "corr")
-OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile") + SCALAR_OPS
+COLUMNS_OPS = ("histogram", "group_by")
+OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile") + SCALAR_OPS + COLUMNS_OPS
 
 
 class CaseFailure(Exception):
@@ -33,6 +34,7 @@ def run_case(case):
 
     column, code = _import(case["input"])
     result = None
+    outputs = []  # columnas nuevas de `histogram` y `group_by`; se cierran todas
     try:
         if code == capi.OK:
             if op == "slice":
@@ -50,6 +52,8 @@ def run_case(case):
                     value, code = column.percentile(capi.parse_float(case["args"]["p"]))
             elif op in SCALAR_OPS:
                 value, integer, code = _run_scalar(op, case, column)
+            elif op in COLUMNS_OPS:
+                outputs, code = _run_columns(op, case, column)
             else:
                 result = column
                 column = None  # `result` es el dueno; no se libera dos veces
@@ -57,6 +61,8 @@ def run_case(case):
             _check_error(expect, code)
         elif "error" in expect:
             raise CaseFailure(f"esperaba el error {expect['error']!r}, pero la operacion tuvo exito")
+        elif op in COLUMNS_OPS:
+            _check_columns(expect, outputs)
         elif op in SCALAR_OPS and integer:
             _check_int(expect, value)
         elif op in ("median", "percentile") + SCALAR_OPS:
@@ -65,7 +71,7 @@ def run_case(case):
             _check_counts(expect, result)
             _check_exported(expect, result)
     finally:
-        for handle in (result, column):
+        for handle in (result, column, *outputs):
             if handle is not None:
                 handle.close()
 
@@ -95,6 +101,53 @@ def _run_scalar(op, case, column):
     else:
         value, code = column.scalar(op, integer=gives_int)
     return value, gives_int, code
+
+
+def _run_columns(op, case, column):
+    """`histogram` y `group_by`: devuelven `([columnas], codigo)`."""
+    args = case.get("args", {})
+    if op == "histogram":
+        n_bins = args.get("n_bins")
+        if not isinstance(n_bins, int) or isinstance(n_bins, bool) or n_bins < 0:
+            raise CaseFailure("args.n_bins falta o no es un entero >= 0")
+        value_range = args.get("range")
+        if value_range is not None:
+            if len(value_range) != 2:
+                raise CaseFailure("args.range debe ser [lo, hi]")
+            value_range = tuple(capi.parse_float(v) for v in value_range)
+        return column.histogram(n_bins, value_range)
+    agg = args.get("agg")
+    if agg not in capi.AGG:
+        raise CaseFailure(f"args.agg desconocido: {agg!r}")
+    ddof = 0
+    if agg in ("var", "std"):
+        ddof = args.get("ddof")
+        if not isinstance(ddof, int) or isinstance(ddof, bool) or ddof < 0:
+            raise CaseFailure("args.ddof falta o no es un entero >= 0")
+    if "input2" not in case:
+        raise CaseFailure("input2 falta")
+    values, code = _import(case["input2"])
+    if code != capi.OK:
+        return [], code
+    try:
+        return column.group_by(values, agg, ddof)
+    finally:
+        values.close()
+
+
+def _check_columns(expect, outputs):
+    wanted = expect.get("columns")
+    if not isinstance(wanted, list):
+        raise CaseFailure("expect.columns falta (debe ser una lista)")
+    if len(wanted) != len(outputs):
+        raise CaseFailure(
+            f"expect.columns tiene {len(wanted)} entradas y la operacion devolvio {len(outputs)} columnas"
+        )
+    for i, (want, handle) in enumerate(zip(wanted, outputs)):
+        try:
+            _check_exported(want, handle)
+        except CaseFailure as e:
+            raise CaseFailure(f"columns[{i}]: {e}") from None
 
 
 def _import(spec_input):

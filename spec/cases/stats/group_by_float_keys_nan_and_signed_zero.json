@@ -1,0 +1,47 @@
+{
+  "spec_version": 1,
+  "id": "stats/group_by_float_keys_nan_and_signed_zero",
+  "description": "todos los NaN son un grupo y -0.0 y 0.0 son grupos distintos",
+  "input": {
+    "dtype": "float64",
+    "values": [
+      "NaN",
+      "-0.0",
+      0.0,
+      "NaN"
+    ]
+  },
+  "op": "group_by",
+  "input2": {
+    "dtype": "int64",
+    "values": [
+      1,
+      2,
+      4,
+      8
+    ]
+  },
+  "args": {
+    "agg": "count"
+  },
+  "expect": {
+    "columns": [
+      {
+        "dtype": "float64",
+        "values": [
+          "NaN",
+          "-0.0",
+          0.0
+        ]
+      },
+      {
+        "dtype": "int64",
+        "values": [
+          2,
+          1,
+          1
+        ]
+      }
+    ]
+  }
+}

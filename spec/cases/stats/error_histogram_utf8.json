@@ -1,0 +1,18 @@
+{
+  "spec_version": 1,
+  "id": "stats/error_histogram_utf8",
+  "description": "el histograma no acepta utf8",
+  "input": {
+    "dtype": "utf8",
+    "values": [
+      "a"
+    ]
+  },
+  "op": "histogram",
+  "args": {
+    "n_bins": 2
+  },
+  "expect": {
+    "error": "UNSUPPORTED"
+  }
+}

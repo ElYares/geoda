@@ -1,0 +1,47 @@
+{
+  "spec_version": 1,
+  "id": "stats/group_by_sum_utf8_keys",
+  "description": "suma por grupo en orden de primera aparicion; la suma entera sale int64",
+  "input": {
+    "dtype": "utf8",
+    "values": [
+      "a",
+      "b",
+      "a",
+      "b",
+      "a"
+    ]
+  },
+  "op": "group_by",
+  "input2": {
+    "dtype": "int64",
+    "values": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ]
+  },
+  "args": {
+    "agg": "sum"
+  },
+  "expect": {
+    "columns": [
+      {
+        "dtype": "utf8",
+        "values": [
+          "a",
+          "b"
+        ]
+      },
+      {
+        "dtype": "int64",
+        "values": [
+          9,
+          6
+        ]
+      }
+    ]
+  }
+}

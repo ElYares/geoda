@@ -13,14 +13,15 @@ use std::path::{Path, PathBuf};
 use std::ptr;
 
 use geoda::{
-    GEODA_ERR_ALLOC, GEODA_ERR_FFI, GEODA_ERR_INTERNAL, GEODA_ERR_INVALID_ARGUMENT,
+    GEODA_AGG_COUNT, GEODA_AGG_MAX, GEODA_AGG_MEAN, GEODA_AGG_MIN, GEODA_AGG_STD, GEODA_AGG_SUM,
+    GEODA_AGG_VAR, GEODA_ERR_ALLOC, GEODA_ERR_FFI, GEODA_ERR_INTERNAL, GEODA_ERR_INVALID_ARGUMENT,
     GEODA_ERR_LENGTH_MISMATCH, GEODA_ERR_OUT_OF_BOUNDS, GEODA_ERR_PANIC, GEODA_ERR_TYPE_MISMATCH,
     GEODA_ERR_UNSUPPORTED, GEODA_OK, GeodaColumn, geoda_column_corr, geoda_column_count,
-    geoda_column_free, geoda_column_from_arrow, geoda_column_len, geoda_column_max_f64,
-    geoda_column_max_i64, geoda_column_mean, geoda_column_median, geoda_column_min_f64,
-    geoda_column_min_i64, geoda_column_null_count, geoda_column_percentile, geoda_column_slice,
-    geoda_column_std, geoda_column_sum_f64, geoda_column_sum_i64, geoda_column_to_arrow,
-    geoda_column_var, geoda_last_error_message,
+    geoda_column_free, geoda_column_from_arrow, geoda_column_group_by, geoda_column_histogram,
+    geoda_column_len, geoda_column_max_f64, geoda_column_max_i64, geoda_column_mean,
+    geoda_column_median, geoda_column_min_f64, geoda_column_min_i64, geoda_column_null_count,
+    geoda_column_percentile, geoda_column_slice, geoda_column_std, geoda_column_sum_f64,
+    geoda_column_sum_i64, geoda_column_to_arrow, geoda_column_var, geoda_last_error_message,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -326,6 +327,23 @@ fn check_expect(expect: &Value, outcome: &Outcome) -> CaseResult {
             check_counts(expect, handle)?;
             check_exported(expect, handle)
         }
+        Outcome::Columns(handles) => {
+            let expected = expect
+                .get("columns")
+                .and_then(Value::as_array)
+                .ok_or("expect.columns falta (debe ser una lista)")?;
+            if expected.len() != handles.len() {
+                return Err(format!(
+                    "expect.columns tiene {} entradas y la operacion devolvio {} columnas",
+                    expected.len(),
+                    handles.len()
+                ));
+            }
+            for (i, (want, handle)) in expected.iter().zip(handles).enumerate() {
+                check_exported(want, handle).map_err(|e| format!("columns[{i}]: {e}"))?;
+            }
+            Ok(())
+        }
         Outcome::Int(actual) => {
             let expected = expect
                 .get("value")
@@ -369,6 +387,8 @@ fn check_error(expect: &Value, code: i32) -> CaseResult {
 /// enteros) o un `float64`.
 enum Outcome {
     Column(Handle),
+    /// Varias columnas nuevas (`histogram`, `group_by`), en el orden de `spec/README.md`.
+    Columns(Vec<Handle>),
     Int(i64),
     Value(f64),
 }
@@ -399,6 +419,8 @@ fn run_op(op: &str, case: &Value, handle: Handle) -> Result<OpResult, String> {
         "count" | "sum" | "min" | "max" | "mean" | "var" | "std" | "corr" => {
             run_scalar(op, case, &handle)
         }
+        "histogram" => run_histogram(case, &handle),
+        "group_by" => run_group_by(case, &handle),
         "slice" => {
             let arg = |name: &str| -> Result<usize, String> {
                 case["args"][name]
@@ -418,6 +440,86 @@ fn run_op(op: &str, case: &Value, handle: Handle) -> Result<OpResult, String> {
         }
         otro => Err(format!("op desconocida: {otro:?}")),
     }
+}
+
+/// `n_bins` o `ddof`: un entero >= 0 de `args`.
+fn usize_arg(case: &Value, name: &str) -> Result<usize, String> {
+    case["args"][name]
+        .as_u64()
+        .and_then(|n| usize::try_from(n).ok())
+        .ok_or_else(|| format!("args.{name} falta o no es un entero >= 0"))
+}
+
+/// Recoge los handles que la capi dejo en los `out`; si fallo, todos deben ser NULL.
+fn collect_outs(code: i32, outs: &[*mut GeodaColumn]) -> Result<OpResult, String> {
+    if code != GEODA_OK {
+        if outs.iter().any(|p| !p.is_null()) {
+            return Err("la capi fallo pero dejo un out sin poner en NULL".into());
+        }
+        return Ok(Err(code));
+    }
+    if outs.iter().any(|p| p.is_null()) {
+        return Err("la capi devolvio GEODA_OK con un out NULL".into());
+    }
+    Ok(Ok(Outcome::Columns(
+        outs.iter().map(|&p| Handle(p)).collect(),
+    )))
+}
+
+fn run_histogram(case: &Value, handle: &Handle) -> Result<OpResult, String> {
+    let n_bins = usize_arg(case, "n_bins")?;
+    let range = match case["args"].get("range") {
+        None | Some(Value::Null) => None,
+        Some(Value::Array(pair)) if pair.len() == 2 => {
+            Some((parse_f64(&pair[0])?, parse_f64(&pair[1])?))
+        }
+        Some(_) => return Err("args.range debe ser [lo, hi]".into()),
+    };
+    let mut outs = [ptr::null_mut::<GeodaColumn>(); 3];
+    let [edges, counts, outside] = &mut outs;
+    let (lo, hi) = range.unwrap_or((0.0, 0.0));
+    // SAFETY: handle valido y los `out` son escribibles.
+    let code = unsafe {
+        geoda_column_histogram(
+            handle.0,
+            n_bins,
+            range.is_some(),
+            lo,
+            hi,
+            edges,
+            counts,
+            outside,
+        )
+    };
+    collect_outs(code, &outs)
+}
+
+fn run_group_by(case: &Value, handle: &Handle) -> Result<OpResult, String> {
+    let agg = match case["args"]["agg"].as_str().ok_or("args.agg falta")? {
+        "count" => GEODA_AGG_COUNT,
+        "sum" => GEODA_AGG_SUM,
+        "min" => GEODA_AGG_MIN,
+        "max" => GEODA_AGG_MAX,
+        "mean" => GEODA_AGG_MEAN,
+        "var" => GEODA_AGG_VAR,
+        "std" => GEODA_AGG_STD,
+        otro => return Err(format!("args.agg desconocido: {otro:?}")),
+    };
+    let ddof = if matches!(agg, GEODA_AGG_VAR | GEODA_AGG_STD) {
+        usize_arg(case, "ddof")?
+    } else {
+        0
+    };
+    let values = match import_through_capi(case.get("input2").ok_or("input2 falta")?)? {
+        Ok(values) => values,
+        Err(code) => return Ok(Err(code)),
+    };
+    let mut outs = [ptr::null_mut::<GeodaColumn>(); 2];
+    let [out_keys, out_values] = &mut outs;
+    // SAFETY: handles validos y `out` escribibles.
+    let code =
+        unsafe { geoda_column_group_by(handle.0, values.0, agg, ddof, out_keys, out_values) };
+    collect_outs(code, &outs)
 }
 
 /// Estadisticos escalares: `sum`, `min` y `max` llaman a la variante `_i64` si la columna de
