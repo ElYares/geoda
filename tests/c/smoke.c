@@ -128,6 +128,42 @@ int main(void) {
     geoda_column_free(col);
     schema.release(&schema);
 
+    /* Estadisticos escalares sobre [10, NULL, 30]: count, sum, min, max, mean, var, std.
+       `sum`, `min` y `max` conservan el tipo (aqui Int64 -> `_i64`); la variante equivocada
+       es TYPE_MISMATCH y no escribe `out`. */
+    int64_con_un_nulo(&schema, &array);
+    CHECK(geoda_column_from_arrow(&schema, &array, &col) == GEODA_OK);
+    int64_t entero = -1;
+    CHECK(geoda_column_count(col, &entero) == GEODA_OK);
+    CHECK(entero == 2);
+    CHECK(geoda_column_sum_i64(col, &entero) == GEODA_OK);
+    CHECK(entero == 40);
+    CHECK(geoda_column_min_i64(col, &entero) == GEODA_OK);
+    CHECK(entero == 10);
+    CHECK(geoda_column_max_i64(col, &entero) == GEODA_OK);
+    CHECK(entero == 30);
+    CHECK(geoda_column_mean(col, &valor) == GEODA_OK);
+    CHECK(valor == 20.0);
+    CHECK(geoda_column_var(col, 1, &valor) == GEODA_OK);
+    CHECK(valor == 200.0);
+    CHECK(geoda_column_std(col, 0, &valor) == GEODA_OK);
+    CHECK(valor == 10.0);
+    valor = -1.0;
+    CHECK(geoda_column_sum_f64(col, &valor) == GEODA_ERR_TYPE_MISMATCH);
+    CHECK(valor == -1.0);
+    CHECK(strlen(geoda_last_error_message()) > 0);
+    /* ddof >= n valores validos, sin escribir `out`. */
+    CHECK(geoda_column_var(col, 2, &valor) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(valor == -1.0);
+    /* Correlacion de una columna consigo misma, y punteros NULL. */
+    CHECK(geoda_column_corr(col, col, &valor) == GEODA_OK);
+    CHECK(valor > 0.999999 && valor <= 1.0);
+    CHECK(geoda_column_corr(col, NULL, &valor) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_column_count(NULL, &entero) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_column_mean(col, NULL) == GEODA_ERR_INVALID_ARGUMENT);
+    geoda_column_free(col);
+    schema.release(&schema);
+
     /* Entrada invalida: formato que geoda no soporta. */
     int64_con_un_nulo(&schema, &array);
     schema.format = "tdD"; /* decimal128 no esta soportado */

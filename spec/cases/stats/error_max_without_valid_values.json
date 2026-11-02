@@ -1,0 +1,15 @@
+{
+  "spec_version": 1,
+  "id": "stats/error_max_without_valid_values",
+  "description": "max sin valores validos es INVALID_ARGUMENT (S6)",
+  "input": {
+    "dtype": "int64",
+    "values": [
+      null
+    ]
+  },
+  "op": "max",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

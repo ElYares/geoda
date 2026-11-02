@@ -102,8 +102,32 @@ def _load():
             [p_handle, ctypes.c_double, ctypes.POINTER(ctypes.c_double)],
             ctypes.c_int32,
         ),
+        "geoda_column_count": ([p_handle, ctypes.POINTER(ctypes.c_int64)], ctypes.c_int32),
+        "geoda_column_mean": ([p_handle, ctypes.POINTER(ctypes.c_double)], ctypes.c_int32),
+        "geoda_column_var": (
+            [p_handle, ctypes.c_size_t, ctypes.POINTER(ctypes.c_double)],
+            ctypes.c_int32,
+        ),
+        "geoda_column_std": (
+            [p_handle, ctypes.c_size_t, ctypes.POINTER(ctypes.c_double)],
+            ctypes.c_int32,
+        ),
+        "geoda_column_corr": (
+            [p_handle, p_handle, ctypes.POINTER(ctypes.c_double)],
+            ctypes.c_int32,
+        ),
         "geoda_column_free": ([p_handle], None),
     }
+    # `sum`, `min` y `max` conservan el tipo de la columna: una variante por familia.
+    for stat in ("sum", "min", "max"):
+        signatures[f"geoda_column_{stat}_i64"] = (
+            [p_handle, ctypes.POINTER(ctypes.c_int64)],
+            ctypes.c_int32,
+        )
+        signatures[f"geoda_column_{stat}_f64"] = (
+            [p_handle, ctypes.POINTER(ctypes.c_double)],
+            ctypes.c_int32,
+        )
     for name, (argtypes, restype) in signatures.items():
         fn = getattr(lib, name)
         fn.argtypes, fn.restype = argtypes, restype
@@ -161,6 +185,16 @@ class Column:
         """`(valor, 0)` si sale bien; `(None, codigo)` si la capi falla."""
         out = ctypes.c_double(0.0)
         code = LIB.geoda_column_percentile(self.handle, p, ctypes.byref(out))
+        return (out.value, code) if code == OK else (None, code)
+
+    def scalar(self, name, *args, integer=False):
+        """Estadistico escalar `geoda_column_<name>`; `args` van entre el handle y `out`.
+
+        `integer` elige un `i64` de salida en vez de un `f64`. `(valor, 0)` si sale bien;
+        `(None, codigo)` si la capi falla (y entonces `out` no se escribio).
+        """
+        out = ctypes.c_int64(0) if integer else ctypes.c_double(0.0)
+        code = getattr(LIB, f"geoda_column_{name}")(self.handle, *args, ctypes.byref(out))
         return (out.value, code) if code == OK else (None, code)
 
     def export(self):

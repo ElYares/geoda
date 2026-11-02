@@ -12,7 +12,8 @@ import capi
 
 SPEC_VERSION = 1
 CASES_DIR = capi.ROOT / "spec" / "cases"
-OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile")
+SCALAR_OPS = ("count", "sum", "min", "max", "mean", "var", "std", "corr")
+OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile") + SCALAR_OPS
 
 
 class CaseFailure(Exception):
@@ -47,6 +48,8 @@ def run_case(case):
                     if "p" not in case.get("args", {}):
                         raise CaseFailure("args.p falta")
                     value, code = column.percentile(capi.parse_float(case["args"]["p"]))
+            elif op in SCALAR_OPS:
+                value, integer, code = _run_scalar(op, case, column)
             else:
                 result = column
                 column = None  # `result` es el dueno; no se libera dos veces
@@ -54,7 +57,9 @@ def run_case(case):
             _check_error(expect, code)
         elif "error" in expect:
             raise CaseFailure(f"esperaba el error {expect['error']!r}, pero la operacion tuvo exito")
-        elif op in ("median", "percentile"):
+        elif op in SCALAR_OPS and integer:
+            _check_int(expect, value)
+        elif op in ("median", "percentile") + SCALAR_OPS:
             _check_value(expect, value)
         else:
             _check_counts(expect, result)
@@ -63,6 +68,33 @@ def run_case(case):
         for handle in (result, column):
             if handle is not None:
                 handle.close()
+
+
+def _run_scalar(op, case, column):
+    """Estadistico escalar. `sum`, `min` y `max` llaman a la variante `_i64` si la entrada
+    es entera y a la `_f64` si no (ver `spec/README.md`). Devuelve `(valor, es_entero, codigo)`."""
+    int_input = case["input"]["dtype"] in ("int32", "int64")
+    gives_int = op == "count" or (int_input and op in ("sum", "min", "max"))
+    if op in ("sum", "min", "max"):
+        value, code = column.scalar(f"{op}_{'i64' if int_input else 'f64'}", integer=int_input)
+    elif op in ("var", "std"):
+        ddof = case.get("args", {}).get("ddof")
+        if not isinstance(ddof, int) or isinstance(ddof, bool) or ddof < 0:
+            raise CaseFailure("args.ddof falta o no es un entero >= 0")
+        value, code = column.scalar(op, ddof)
+    elif op == "corr":
+        if "input2" not in case:
+            raise CaseFailure("input2 falta")
+        other, code = _import(case["input2"])
+        if code != capi.OK:
+            return None, False, code
+        try:
+            value, code = column.scalar("corr", other.handle)
+        finally:
+            other.close()
+    else:
+        value, code = column.scalar(op, integer=gives_int)
+    return value, gives_int, code
 
 
 def _import(spec_input):
@@ -81,6 +113,14 @@ def _check_error(expect, code):
         raise CaseFailure(
             f"esperaba el error {expected}, salio {capi.category(code)} ({capi.last_error()})"
         )
+
+
+def _check_int(expect, actual):
+    want = expect.get("value")
+    if isinstance(want, bool) or not isinstance(want, int):
+        raise CaseFailure("expect.value debe ser un entero de JSON")
+    if want != actual:
+        raise CaseFailure(f"value: esperado {want!r}, salio {actual!r}")
 
 
 def _check_value(expect, actual):

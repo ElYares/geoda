@@ -1,0 +1,16 @@
+{
+  "spec_version": 1,
+  "id": "stats/sum_int64_without_valid_values",
+  "description": "sin valores validos la suma es 0, no un error",
+  "input": {
+    "dtype": "int64",
+    "values": [
+      null,
+      null
+    ]
+  },
+  "op": "sum",
+  "expect": {
+    "value": 0
+  }
+}

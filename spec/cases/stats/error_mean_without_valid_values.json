@@ -1,0 +1,16 @@
+{
+  "spec_version": 1,
+  "id": "stats/error_mean_without_valid_values",
+  "description": "media sin valores validos es INVALID_ARGUMENT (S6)",
+  "input": {
+    "dtype": "float64",
+    "values": [
+      null,
+      null
+    ]
+  },
+  "op": "mean",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

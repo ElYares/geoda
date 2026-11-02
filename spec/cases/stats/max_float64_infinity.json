@@ -1,0 +1,17 @@
+{
+  "spec_version": 1,
+  "id": "stats/max_float64_infinity",
+  "description": "el maximo de float64 admite Infinity",
+  "input": {
+    "dtype": "float64",
+    "values": [
+      1.5,
+      "Infinity",
+      -2.0
+    ]
+  },
+  "op": "max",
+  "expect": {
+    "value": "Infinity"
+  }
+}

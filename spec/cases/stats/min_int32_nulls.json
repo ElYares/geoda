@@ -1,0 +1,18 @@
+{
+  "spec_version": 1,
+  "id": "stats/min_int32_nulls",
+  "description": "el minimo entero ignora los nulos",
+  "input": {
+    "dtype": "int32",
+    "values": [
+      5,
+      null,
+      -3,
+      9
+    ]
+  },
+  "op": "min",
+  "expect": {
+    "value": -3
+  }
+}

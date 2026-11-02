@@ -1,0 +1,16 @@
+{
+  "spec_version": 1,
+  "id": "stats/error_sum_utf8",
+  "description": "sum no acepta utf8",
+  "input": {
+    "dtype": "utf8",
+    "values": [
+      "a",
+      "b"
+    ]
+  },
+  "op": "sum",
+  "expect": {
+    "error": "UNSUPPORTED"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "spec_version": 1,
+  "id": "stats/var_int64_ddof1",
+  "description": "varianza muestral (ddof = 1): 5/3",
+  "input": {
+    "dtype": "int64",
+    "values": [
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "op": "var",
+  "args": {
+    "ddof": 1
+  },
+  "expect": {
+    "value": 1.6666666666666667
+  }
+}

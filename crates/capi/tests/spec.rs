@@ -15,9 +15,12 @@ use std::ptr;
 use geoda::{
     GEODA_ERR_ALLOC, GEODA_ERR_FFI, GEODA_ERR_INTERNAL, GEODA_ERR_INVALID_ARGUMENT,
     GEODA_ERR_LENGTH_MISMATCH, GEODA_ERR_OUT_OF_BOUNDS, GEODA_ERR_PANIC, GEODA_ERR_TYPE_MISMATCH,
-    GEODA_ERR_UNSUPPORTED, GEODA_OK, GeodaColumn, geoda_column_free, geoda_column_from_arrow,
-    geoda_column_len, geoda_column_median, geoda_column_null_count, geoda_column_percentile,
-    geoda_column_slice, geoda_column_to_arrow, geoda_last_error_message,
+    GEODA_ERR_UNSUPPORTED, GEODA_OK, GeodaColumn, geoda_column_corr, geoda_column_count,
+    geoda_column_free, geoda_column_from_arrow, geoda_column_len, geoda_column_max_f64,
+    geoda_column_max_i64, geoda_column_mean, geoda_column_median, geoda_column_min_f64,
+    geoda_column_min_i64, geoda_column_null_count, geoda_column_percentile, geoda_column_slice,
+    geoda_column_std, geoda_column_sum_f64, geoda_column_sum_i64, geoda_column_to_arrow,
+    geoda_column_var, geoda_last_error_message,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -323,6 +326,17 @@ fn check_expect(expect: &Value, outcome: &Outcome) -> CaseResult {
             check_counts(expect, handle)?;
             check_exported(expect, handle)
         }
+        Outcome::Int(actual) => {
+            let expected = expect
+                .get("value")
+                .and_then(Value::as_i64)
+                .ok_or("expect.value debe ser un entero de JSON")?;
+            if expected == *actual {
+                Ok(())
+            } else {
+                Err(format!("value: esperado {expected}, salio {actual}"))
+            }
+        }
         Outcome::Value(actual) => {
             let expected = parse_f64(expect.get("value").ok_or("expect.value falta")?)?;
             if same_f64(expected, *actual) {
@@ -351,9 +365,11 @@ fn check_error(expect: &Value, code: i32) -> CaseResult {
     }
 }
 
-/// Lo que produce una operacion: una columna, o un numero (`median`, `percentile`).
+/// Lo que produce una operacion: una columna, un entero (`count` y `sum`/`min`/`max` sobre
+/// enteros) o un `float64`.
 enum Outcome {
     Column(Handle),
+    Int(i64),
     Value(f64),
 }
 
@@ -380,6 +396,9 @@ fn run_op(op: &str, case: &Value, handle: Handle) -> Result<OpResult, String> {
                 Err(code)
             })
         }
+        "count" | "sum" | "min" | "max" | "mean" | "var" | "std" | "corr" => {
+            run_scalar(op, case, &handle)
+        }
         "slice" => {
             let arg = |name: &str| -> Result<usize, String> {
                 case["args"][name]
@@ -399,6 +418,47 @@ fn run_op(op: &str, case: &Value, handle: Handle) -> Result<OpResult, String> {
         }
         otro => Err(format!("op desconocida: {otro:?}")),
     }
+}
+
+/// Estadisticos escalares: `sum`, `min` y `max` llaman a la variante `_i64` si la columna de
+/// entrada es entera y a la `_f64` si no (ver `spec/README.md`).
+fn run_scalar(op: &str, case: &Value, handle: &Handle) -> Result<OpResult, String> {
+    let int_input = matches!(case["input"]["dtype"].as_str(), Some("int32" | "int64"));
+    let ddof = || -> Result<usize, String> {
+        case["args"]["ddof"]
+            .as_u64()
+            .and_then(|n| usize::try_from(n).ok())
+            .ok_or_else(|| "args.ddof falta o no es un entero >= 0".to_string())
+    };
+    let (mut int, mut float) = (0_i64, 0.0_f64);
+    // SAFETY: handle valido y cada `out` escribible.
+    let code = unsafe {
+        match (op, int_input) {
+            ("count", _) => geoda_column_count(handle.0, &raw mut int),
+            ("sum", true) => geoda_column_sum_i64(handle.0, &raw mut int),
+            ("sum", false) => geoda_column_sum_f64(handle.0, &raw mut float),
+            ("min", true) => geoda_column_min_i64(handle.0, &raw mut int),
+            ("min", false) => geoda_column_min_f64(handle.0, &raw mut float),
+            ("max", true) => geoda_column_max_i64(handle.0, &raw mut int),
+            ("max", false) => geoda_column_max_f64(handle.0, &raw mut float),
+            ("mean", _) => geoda_column_mean(handle.0, &raw mut float),
+            ("var", _) => geoda_column_var(handle.0, ddof()?, &raw mut float),
+            ("std", _) => geoda_column_std(handle.0, ddof()?, &raw mut float),
+            ("corr", _) => match import_through_capi(case.get("input2").ok_or("input2 falta")?)? {
+                Ok(other) => geoda_column_corr(handle.0, other.0, &raw mut float),
+                Err(code) => code,
+            },
+            _ => return Err(format!("op escalar desconocida: {op:?}")),
+        }
+    };
+    let gives_int = op == "count" || (int_input && matches!(op, "sum" | "min" | "max"));
+    Ok(if code != GEODA_OK {
+        Err(code)
+    } else if gives_int {
+        Ok(Outcome::Int(int))
+    } else {
+        Ok(Outcome::Value(float))
+    })
 }
 
 /// Ejecuta un caso. Cualquier cosa inesperada es `Err`, incluida una `op` que el

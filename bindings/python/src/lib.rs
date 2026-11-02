@@ -1,10 +1,11 @@
-//! Binding de Python para geoda: `version`, `column_len`, `median` y `percentile`.
+//! Binding de Python para geoda: `version`, `column_len`, `median`, `percentile` y los
+//! estadisticos escalares (`count`, `sum`, `min`, `max`, `mean`, `var`, `std`, `corr`).
 //!
-//! `median` y `percentile` aceptan una lista o cualquier objeto con el protocolo Arrow
+//! Todas las funciones numericas aceptan una lista o cualquier objeto con el protocolo Arrow
 //! `PyCapsule` (`__arrow_c_array__`): `pyarrow`, `polars`, `pandas` con Arrow... (S10). Los
 //! datos se copian (decision 003); no hace falta tener `pyarrow` para usar listas.
 //!
-//! Depende de `geoda-core` y `geoda-algo` directamente (D2). El contrato de la C-API lo ejercita el
+//! Depende de `geoda-core`, `geoda-algo` y `geoda-stats` directamente (D2). El contrato de la C-API lo ejercita el
 //! runner de spec, que carga `libgeoda` por `ctypes`; este modulo no pasa por ahi.
 
 // Los macros de PyO3 generan `unsafe`: el binding es frontera, como `capi`.
@@ -17,6 +18,10 @@ use pyo3::types::PyCapsule;
 use geoda_algo::{Method, median_column, percentile_column};
 use geoda_core::interop::arrow_c::{ArrowArray, ArrowSchema, import_column};
 use geoda_core::{Column, DataType, Error, PrimitiveBuilder};
+use geoda_stats::{
+    Number, correlation_columns, count_column, max_column, mean_column, min_column, std_dev_column,
+    sum_column, variance_column,
+};
 
 /// Version de geoda. Todos los crates del workspace comparten version, asi que
 /// coincide con la de `geoda-capi`.
@@ -138,6 +143,101 @@ fn percentile(values: &Bound<'_, PyAny>, p: f64) -> PyResult<f64> {
     percentile_column(&input_column(values)?, p, Method::default()).map_err(|e| value_error(&e))
 }
 
+/// Un `Number` de `geoda-stats` como `int` (columna entera) o `float` (columna `Float64`).
+fn number_to_py(py: Python<'_>, number: Number) -> PyResult<Bound<'_, PyAny>> {
+    Ok(match number {
+        Number::Int(v) => v.into_pyobject(py)?.into_any(),
+        Number::Float(v) => v.into_pyobject(py)?.into_any(),
+    })
+}
+
+/// Cantidad de valores no nulos.
+///
+/// # Errors
+/// `TypeError` si la columna Arrow no es numerica.
+#[pyfunction]
+fn count(values: &Bound<'_, PyAny>) -> PyResult<usize> {
+    count_column(&input_column(values)?).map_err(|e| value_error(&e))
+}
+
+/// Suma de los valores no nulos; sin valores validos es 0. Una columna Arrow entera da un
+/// `int`; una lista o una columna `Float64`, un `float`. Un `NaN` da `NaN`.
+///
+/// # Errors
+/// `ValueError` si una suma entera no cabe en `int64`; `TypeError` como en `median`.
+#[pyfunction]
+fn sum<'py>(py: Python<'py>, values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    number_to_py(
+        py,
+        sum_column(&input_column(values)?).map_err(|e| value_error(&e))?,
+    )
+}
+
+/// Minimo de los valores no nulos, con el tipo de la columna (ver `sum`). Un `NaN` da `NaN`.
+///
+/// # Errors
+/// `ValueError` si no hay valores validos; `TypeError` como en `median`.
+#[pyfunction]
+fn min<'py>(py: Python<'py>, values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    number_to_py(
+        py,
+        min_column(&input_column(values)?).map_err(|e| value_error(&e))?,
+    )
+}
+
+/// Maximo de los valores no nulos, con el tipo de la columna (ver `sum`). Un `NaN` da `NaN`.
+///
+/// # Errors
+/// `ValueError` si no hay valores validos; `TypeError` como en `median`.
+#[pyfunction]
+fn max<'py>(py: Python<'py>, values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    number_to_py(
+        py,
+        max_column(&input_column(values)?).map_err(|e| value_error(&e))?,
+    )
+}
+
+/// Media de los valores no nulos, siempre `float`.
+///
+/// # Errors
+/// `ValueError` si no hay valores validos; `TypeError` como en `median`.
+#[pyfunction]
+fn mean(values: &Bound<'_, PyAny>) -> PyResult<f64> {
+    mean_column(&input_column(values)?).map_err(|e| value_error(&e))
+}
+
+/// Varianza con `ddof` grados de libertad restados. Por defecto `ddof=1` (muestral, como R y
+/// pandas); `NumPy` usa `0` (S2).
+///
+/// # Errors
+/// `ValueError` si no hay valores validos o `ddof >= n`; `TypeError` como en `median`.
+#[pyfunction]
+#[pyo3(signature = (values, ddof=1))]
+fn var(values: &Bound<'_, PyAny>, ddof: usize) -> PyResult<f64> {
+    variance_column(&input_column(values)?, ddof).map_err(|e| value_error(&e))
+}
+
+/// Desviacion estandar (`sqrt` de la varianza) con `ddof` grados de libertad restados
+/// (por defecto `1`).
+///
+/// # Errors
+/// Los de `var`.
+#[pyfunction]
+#[pyo3(name = "std", signature = (values, ddof=1))]
+fn std_dev(values: &Bound<'_, PyAny>, ddof: usize) -> PyResult<f64> {
+    std_dev_column(&input_column(values)?, ddof).map_err(|e| value_error(&e))
+}
+
+/// Correlacion de Pearson entre dos columnas, en `[-1, 1]`. Las filas con nulo en cualquiera
+/// de las dos se descartan en ambas.
+///
+/// # Errors
+/// `ValueError` si miden distinto o una es constante; `TypeError` como en `median`.
+#[pyfunction]
+fn corr(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<f64> {
+    correlation_columns(&input_column(x)?, &input_column(y)?).map_err(|e| value_error(&e))
+}
+
 /// Modulo nativo `geoda._geoda`.
 #[pymodule]
 fn _geoda(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -145,5 +245,13 @@ fn _geoda(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(column_len, m)?)?;
     m.add_function(wrap_pyfunction!(median, m)?)?;
     m.add_function(wrap_pyfunction!(percentile, m)?)?;
+    m.add_function(wrap_pyfunction!(count, m)?)?;
+    m.add_function(wrap_pyfunction!(sum, m)?)?;
+    m.add_function(wrap_pyfunction!(min, m)?)?;
+    m.add_function(wrap_pyfunction!(max, m)?)?;
+    m.add_function(wrap_pyfunction!(mean, m)?)?;
+    m.add_function(wrap_pyfunction!(var, m)?)?;
+    m.add_function(wrap_pyfunction!(std_dev, m)?)?;
+    m.add_function(wrap_pyfunction!(corr, m)?)?;
     Ok(())
 }

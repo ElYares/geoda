@@ -1,0 +1,25 @@
+{
+  "spec_version": 1,
+  "id": "stats/error_corr_constant_column",
+  "description": "una columna constante tiene varianza cero: INVALID_ARGUMENT",
+  "input": {
+    "dtype": "int64",
+    "values": [
+      5,
+      5,
+      5
+    ]
+  },
+  "op": "corr",
+  "input2": {
+    "dtype": "int64",
+    "values": [
+      1,
+      2,
+      3
+    ]
+  },
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

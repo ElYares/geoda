@@ -1,0 +1,17 @@
+{
+  "spec_version": 1,
+  "id": "stats/min_float64_nan",
+  "description": "f64::min ignoraria el NaN: aqui debe propagarse (S5)",
+  "input": {
+    "dtype": "float64",
+    "values": [
+      3.0,
+      "NaN",
+      1.0
+    ]
+  },
+  "op": "min",
+  "expect": {
+    "value": "NaN"
+  }
+}

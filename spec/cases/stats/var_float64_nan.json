@@ -1,0 +1,20 @@
+{
+  "spec_version": 1,
+  "id": "stats/var_float64_nan",
+  "description": "un NaN da NaN en la varianza (S5)",
+  "input": {
+    "dtype": "float64",
+    "values": [
+      1.0,
+      "NaN",
+      3.0
+    ]
+  },
+  "op": "var",
+  "args": {
+    "ddof": 0
+  },
+  "expect": {
+    "value": "NaN"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "spec_version": 1,
+  "id": "stats/error_sum_int64_overflow",
+  "description": "el acumulador es i128 y solo el resultado final debe caber en i64 (S1)",
+  "input": {
+    "dtype": "int64",
+    "values": [
+      9223372036854775807,
+      1
+    ]
+  },
+  "op": "sum",
+  "expect": {
+    "error": "OUT_OF_BOUNDS"
+  }
+}

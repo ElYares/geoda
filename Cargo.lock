@@ -22,6 +22,7 @@ version = "0.0.0"
 dependencies = [
  "geoda-algo",
  "geoda-core",
+ "geoda-stats",
  "serde_json",
 ]
 
@@ -35,6 +36,7 @@ version = "0.0.0"
 dependencies = [
  "geoda-algo",
  "geoda-core",
+ "geoda-stats",
  "pyo3",
 ]
 

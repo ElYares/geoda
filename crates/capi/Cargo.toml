@@ -15,6 +15,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [dependencies]
 geoda-algo = { path = "../algo" }
 geoda-core = { path = "../core" }
+geoda-stats = { path = "../stats" }
 
 [dev-dependencies]
 # Solo para el runner de `spec/` (D7): nunca en `geoda-core`.

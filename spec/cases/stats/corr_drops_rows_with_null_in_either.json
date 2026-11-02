@@ -1,0 +1,27 @@
+{
+  "spec_version": 1,
+  "id": "stats/corr_drops_rows_with_null_in_either",
+  "description": "las filas con nulo en cualquiera de las dos columnas se descartan en ambas (S7)",
+  "input": {
+    "dtype": "int64",
+    "values": [
+      1,
+      null,
+      3,
+      4
+    ]
+  },
+  "op": "corr",
+  "input2": {
+    "dtype": "int64",
+    "values": [
+      8,
+      100,
+      4,
+      2
+    ]
+  },
+  "expect": {
+    "value": -1.0
+  }
+}

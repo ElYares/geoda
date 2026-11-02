@@ -1,0 +1,24 @@
+{
+  "spec_version": 1,
+  "id": "stats/error_corr_length_mismatch",
+  "description": "dos columnas de distinto largo: LENGTH_MISMATCH",
+  "input": {
+    "dtype": "int64",
+    "values": [
+      1,
+      2,
+      3
+    ]
+  },
+  "op": "corr",
+  "input2": {
+    "dtype": "int64",
+    "values": [
+      1,
+      2
+    ]
+  },
+  "expect": {
+    "error": "LENGTH_MISMATCH"
+  }
+}

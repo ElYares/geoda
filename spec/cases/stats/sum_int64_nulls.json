@@ -1,0 +1,17 @@
+{
+  "spec_version": 1,
+  "id": "stats/sum_int64_nulls",
+  "description": "la suma entera ignora los nulos y sale como entero",
+  "input": {
+    "dtype": "int64",
+    "values": [
+      1,
+      null,
+      3
+    ]
+  },
+  "op": "sum",
+  "expect": {
+    "value": 4
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "spec_version": 1,
+  "id": "stats/count_int64_nulls",
+  "description": "count ignora los nulos",
+  "input": {
+    "dtype": "int64",
+    "values": [
+      1,
+      null,
+      3,
+      null
+    ]
+  },
+  "op": "count",
+  "expect": {
+    "value": 2
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "spec_version": 1,
+  "id": "stats/error_var_ddof_not_smaller_than_n",
+  "description": "ddof >= n es INVALID_ARGUMENT (S2)",
+  "input": {
+    "dtype": "int64",
+    "values": [
+      1,
+      2
+    ]
+  },
+  "op": "var",
+  "args": {
+    "ddof": 2
+  },
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

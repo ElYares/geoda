@@ -1,0 +1,17 @@
+{
+  "spec_version": 1,
+  "id": "stats/sum_float64_nan",
+  "description": "un NaN en la columna da NaN en la suma (S5)",
+  "input": {
+    "dtype": "float64",
+    "values": [
+      1.0,
+      "NaN",
+      2.0
+    ]
+  },
+  "op": "sum",
+  "expect": {
+    "value": "NaN"
+  }
+}
