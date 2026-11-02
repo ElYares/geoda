@@ -55,7 +55,7 @@ jobs:
         with:
           python-version: "3.14"
       - run: python -m venv .venv
-      - run: .venv/bin/pip install maturin pyarrow
+      - run: .venv/bin/pip install maturin pyarrow numpy
       - run: cargo build -p geoda-capi
       - name: binding
         working-directory: bindings/python
