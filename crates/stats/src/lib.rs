@@ -11,6 +11,7 @@
 pub mod aggregate;
 pub mod basic;
 pub mod covariance;
+pub mod group;
 pub mod histogram;
 pub mod variance;
 
@@ -23,5 +24,6 @@ pub use basic::{
 };
 pub use covariance::{Correlation, Covariance, correlation_columns, covariance_columns};
 pub use geoda_algo::{Method, median_column, percentile_column};
+pub use group::{Grouped, group_aggregate};
 pub use histogram::{Histogram, HistogramData, MAX_BINS, histogram_column};
 pub use variance::{StdDev, Variance, std_dev_column, variance_column};

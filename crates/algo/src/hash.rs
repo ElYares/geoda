@@ -346,6 +346,129 @@ fn primitive_counts<T: Key + geoda_core::memory::Native>(
     Ok(counter.result)
 }
 
+/// Asignacion de cada fila de una columna al grupo de su valor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Grouping {
+    /// Clave de cada grupo, en el orden de su **primera aparicion**. Las filas con clave
+    /// nula forman un grupo mas, con clave `None` (decision S8).
+    pub keys: Vec<Option<Value>>,
+    /// Grupo de cada fila: `ids[i]` es la posicion en `keys` de la fila `i`.
+    pub ids: Vec<usize>,
+}
+
+/// Construye un [`Grouping`]: la tabla guarda en que posicion de `keys` vive cada clave.
+struct Grouper<K: Key> {
+    table: HashTable<K, usize>,
+    null_group: Option<usize>,
+    keys: Vec<Option<Value>>,
+    ids: Vec<usize>,
+}
+
+impl<K: Key> Grouper<K> {
+    fn new(rows: usize) -> Self {
+        Self {
+            table: HashTable::new(),
+            null_group: None,
+            keys: Vec::new(),
+            ids: Vec::with_capacity(rows),
+        }
+    }
+
+    /// Asigna una fila a su grupo; `value_of` arma el [`Value`] solo la primera vez que
+    /// sale la clave.
+    fn add(&mut self, key: Option<K>, value_of: impl FnOnce(&K) -> Value) {
+        let id = match key {
+            None => *self.null_group.get_or_insert_with(|| {
+                self.keys.push(None);
+                self.keys.len() - 1
+            }),
+            Some(key) => {
+                if let Some(&id) = self.table.get(&key) {
+                    id
+                } else {
+                    self.keys.push(Some(value_of(&key)));
+                    let id = self.keys.len() - 1;
+                    self.table.insert(key, id);
+                    id
+                }
+            }
+        };
+        self.ids.push(id);
+    }
+
+    fn finish(self) -> Grouping {
+        Grouping {
+            keys: self.keys,
+            ids: self.ids,
+        }
+    }
+}
+
+/// Agrupa las filas de una columna por su valor, en tiempo O(n) esperado.
+///
+/// A diferencia de [`value_counts_column`], los nulos **si** son un grupo (decision S8).
+/// En `Float64`, todos los `NaN` son un grupo y `-0.0` y `0.0` son distintos. La cadena
+/// vacia en `Utf8` es un grupo mas.
+///
+/// # Errors
+/// Los de acceso a la columna (no deberian ocurrir con una columna valida).
+pub fn group_column(column: &Column) -> Result<Grouping, Error> {
+    let len = column.len();
+    match column.dtype() {
+        DataType::Bool => {
+            let mut grouper = Grouper::new(len);
+            for i in 0..len {
+                let key = if column.is_null(i)? {
+                    None
+                } else {
+                    Some(column.bool_value(i)?)
+                };
+                grouper.add(key, |&k| Value::Bool(k));
+            }
+            Ok(grouper.finish())
+        }
+        DataType::Int32 => primitive_groups(column, Value::Int32),
+        DataType::Int64 => primitive_groups(column, Value::Int64),
+        DataType::Float64 => {
+            let mut grouper = Grouper::new(len);
+            for (i, &v) in column.values::<f64>()?.iter().enumerate() {
+                let key = if column.is_null(i)? {
+                    None
+                } else {
+                    Some(F64Key::new(v))
+                };
+                grouper.add(key, |k| Value::Float64(k.value()));
+            }
+            Ok(grouper.finish())
+        }
+        DataType::Utf8 => {
+            let mut grouper = Grouper::new(len);
+            for i in 0..len {
+                let key = if column.is_null(i)? {
+                    None
+                } else {
+                    Some(column.str_value(i)?)
+                };
+                grouper.add(key, |&k| Value::Utf8(k.to_owned()));
+            }
+            Ok(grouper.finish())
+        }
+    }
+}
+
+/// Agrupacion de una columna `Int32` o `Int64`.
+fn primitive_groups<T: Key + geoda_core::memory::Native>(
+    column: &Column,
+    wrap: fn(T) -> Value,
+) -> Result<Grouping, Error> {
+    let mut grouper = Grouper::new(column.len());
+    for (i, &v) in column.values::<T>()?.iter().enumerate() {
+        let key = if column.is_null(i)? { None } else { Some(v) };
+        grouper.add(key, |&k| wrap(k));
+    }
+    Ok(grouper.finish())
+}
+
 #[cfg(test)]
 mod tests {
     use geoda_core::{BoolBuilder, PrimitiveBuilder, Utf8Builder};
