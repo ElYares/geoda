@@ -1047,7 +1047,7 @@ mod tests {
             assert_eq!((*edges).0.len(), 3);
             assert_eq!((*counts).0.values::<i64>().unwrap(), &[2, 2]);
             assert_eq!((*outside).0.values::<i64>().unwrap(), &[0, 0, 1, 0]);
-            for handle in [edges, counts, outside] {
+            for handle in [edges, counts, outside, col] {
                 geoda_column_free(handle);
             }
         }
