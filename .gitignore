@@ -12,3 +12,4 @@ graphify-out/
 .env
 .env.*
 !.env.example
+bindings/python/dist/

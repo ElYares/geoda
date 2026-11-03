@@ -13,3 +13,7 @@ dynamic = ["version"]
 # `_geoda` = `lib.name` de Cargo.toml, dentro del paquete `geoda`.
 module-name = "geoda._geoda"
 python-source = "python"
+# La wheel solo lleva el paquete: ni cache de bytecode ni archivos de prueba.
+exclude = ["**/__pycache__/**", "**/*.pyc", "tests/**"]
+# El SBOM generado por maturin guarda la ruta absoluta del checkout (`file:///home/...`).
+sbom = { rust = false, auditwheel = false }

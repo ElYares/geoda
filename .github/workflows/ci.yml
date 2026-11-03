@@ -69,6 +69,42 @@ jobs:
           ../../.venv/bin/python -m unittest discover -s tests -v 2>&1 | tee out.txt
           ! grep -q skipped out.txt
 
+  wheel:
+    # Salida de la fase 2: construir la wheel, comprobar que no lleva rutas ni pruebas, instalarla
+    # en un venv limpio (fuera del repo, sin PYTHONPATH) y correr el ejemplo.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: python -m venv "$RUNNER_TEMP/build"
+      - run: "$RUNNER_TEMP/build/bin/pip install maturin"
+      - name: construir la wheel
+        run: PATH="$RUNNER_TEMP/build/bin:$PATH" bindings/python/build_wheel.sh "$RUNNER_TEMP/wheelhouse"
+      - name: la wheel no lleva rutas de la maquina ni archivos de prueba
+        run: |
+          mkdir "$RUNNER_TEMP/contenido"
+          cd "$RUNNER_TEMP/contenido"
+          unzip -q "$RUNNER_TEMP"/wheelhouse/geoda-*.whl
+          find . -type f | sort
+          if find . -name __pycache__ -o -name '*.pyc' -o -name tests | grep -q .; then
+            echo "la wheel lleva cache de bytecode o pruebas" >&2
+            exit 1
+          fi
+          if grep -rlaF -e "$GITHUB_WORKSPACE" -e "$HOME" .; then
+            echo "la wheel lleva rutas absolutas de esta maquina" >&2
+            exit 1
+          fi
+      - name: instalar en un venv limpio y correr el ejemplo
+        run: |
+          python -m venv "$RUNNER_TEMP/limpio"
+          "$RUNNER_TEMP/limpio/bin/pip" install "$RUNNER_TEMP"/wheelhouse/geoda-*.whl pyarrow
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/limpio/bin/python" -I -c "import geoda, importlib.metadata as m; assert geoda.version() == m.version('geoda'), (geoda.version(), m.version('geoda')); print('geoda', geoda.version(), geoda.__file__)"
+          "$RUNNER_TEMP/limpio/bin/python" -I "$GITHUB_WORKSPACE/examples/estadisticas.py"
+
   miri:
     # Capas con unsafe: Miri detecta lecturas fuera de rango, desalineacion
     # y fugas en core::memory, core::interop y la capi. Necesita nightly; el resto del CI usa stable.
