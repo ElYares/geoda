@@ -8,13 +8,16 @@
 //!
 //! ```text
 //! cargo run --release -p geoda-bench              # n = 1 000 000
-//! cargo run --release -p geoda-bench -- 200000    # otro tamano
+//! cargo run --release -p geoda-bench -- 200000    # otro tamano de la mediana
+//! cargo run --release -p geoda-bench -- 1000000 5000000   # y otro de la varianza
 //! ```
 
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use geoda_algo::{median_of_medians, merge_sort, quickselect};
+use geoda_core::{Column, DataType, PrimitiveBuilder};
+use geoda_stats::{Variance, aggregate_with_workers};
 
 /// Una forma de calcular la mediana de una copia de los datos.
 type MedianFn = fn(&mut [i64]) -> i64;
@@ -22,6 +25,10 @@ type MedianFn = fn(&mut [i64]) -> i64;
 /// Repeticiones por medicion; se reporta el minimo y la mediana.
 const RUNS: usize = 5;
 const SEED: u64 = 0x5EED_2026;
+/// Filas de la columna de la varianza si no se pide otro tamano.
+const STATS_ROWS: usize = 10_000_000;
+/// Numeros de hilos que se comparan en la varianza.
+const WORKER_COUNTS: [usize; 4] = [1, 2, 4, 8];
 
 /// Generador pseudoaleatorio con semilla (xorshift64).
 struct Rng(u64);
@@ -100,6 +107,52 @@ fn median_by_median_of_medians(data: &mut [i64]) -> i64 {
     median_of_medians(data, k, i64::cmp).expect("k valido")
 }
 
+/// Columna `Float64` de `n` valores con la semilla fija.
+fn float_column(n: usize) -> Column {
+    let mut rng = Rng(SEED);
+    let mut builder = PrimitiveBuilder::<f64>::new();
+    for _ in 0..n {
+        #[allow(clippy::cast_precision_loss)]
+        builder.append((rng.next() % 1_000_000_000) as f64 / 1000.0);
+    }
+    builder.finish().expect("la columna se construye")
+}
+
+/// Varianza de una columna con 1, 2, 4 y 8 hilos: tiempos y aceleracion contra 1 hilo.
+/// Los resultados deben coincidir bit a bit; si no, el bench aborta.
+fn bench_variance(n: usize) {
+    let column = float_column(n);
+    let variance = Variance::new(DataType::Float64, 1).expect("Float64 es soportado");
+    println!(
+        "\nvarianza de n = {n} Float64, {RUNS} repeticiones, tiempos en ms (minimo / mediana)\n"
+    );
+    println!("{:<10}{:>22}{:>14}", "hilos", "tiempo", "aceleracion");
+    let mut reference: Option<(u64, Duration)> = None;
+    for workers in WORKER_COUNTS {
+        let mut result = 0_u64;
+        let mut times: Vec<Duration> = (0..RUNS)
+            .map(|_| {
+                let start = Instant::now();
+                let value = aggregate_with_workers(&variance, black_box(&column), workers)
+                    .expect("la varianza se calcula");
+                let elapsed = start.elapsed();
+                result = value.to_bits();
+                elapsed
+            })
+            .collect();
+        times.sort_unstable();
+        let (min, median) = (times[0], times[RUNS / 2]);
+        let (bits, base) = *reference.get_or_insert((result, min));
+        assert_eq!(bits, result, "el resultado cambio con {workers} hilos");
+        let speedup = base.as_secs_f64() / min.as_secs_f64();
+        println!(
+            "{workers:<10}{:>22}{:>13.2}x",
+            format!("{} / {}", ms(min), ms(median)),
+            speedup
+        );
+    }
+}
+
 fn ms(d: Duration) -> String {
     format!("{:.2}", d.as_secs_f64() * 1000.0)
 }
@@ -131,6 +184,11 @@ fn main() {
         }
         println!();
     }
+    bench_variance(
+        std::env::args()
+            .nth(2)
+            .map_or(STATS_ROWS, |a| a.parse().expect("n debe ser un entero")),
+    );
 }
 
 #[cfg(test)]

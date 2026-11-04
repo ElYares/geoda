@@ -23,9 +23,9 @@ pub const BLOCK: usize = 1024;
 ///
 /// `merge` debe ser el equivalente de haber hecho `update` con los datos de ambos
 /// estados; el marco garantiza el orden (`left` son los bloques anteriores a `right`).
-pub trait Aggregate {
-    /// Estado parcial de un tramo de la columna.
-    type State;
+pub trait Aggregate: Sync {
+    /// Estado parcial de un tramo de la columna; viaja entre hilos.
+    type State: Send;
     /// Resultado final.
     type Output;
 
@@ -70,13 +70,15 @@ pub fn aggregate<A: Aggregate>(agg: &A, column: &Column) -> Result<A::Output, Er
     aggregate_with_workers(agg, column, 1)
 }
 
-/// Como [`aggregate`], pero simulando `workers` trabajadores que se reparten los bloques
-/// (el `w`-esimo toma los bloques `w`, `w + workers`, ...) en un solo hilo. El resultado
-/// no depende de `workers`; la prueba existe para que la fase 3 pueda paralelizar sin
-/// cambiar los numeros.
+/// Como [`aggregate`], pero repartiendo los bloques entre `workers` hilos (el `w`-esimo
+/// toma los bloques `w`, `w + workers`, ...). El resultado no depende de `workers`: el
+/// arbol de fusion es el mismo con 1 o con N hilos.
 ///
 /// # Errors
 /// [`Error::InvalidArgument`] si `workers` es 0; ademas los de [`aggregate`].
+///
+/// # Panics
+/// Si `update` hace `panic` en un hilo, el `panic` se relanza en el hilo que llama.
 pub fn aggregate_with_workers<A: Aggregate>(
     agg: &A,
     column: &Column,
@@ -102,13 +104,20 @@ pub fn aggregate_with_workers<A: Aggregate>(
 /// armazon de [`aggregate_with_workers`], expuesto para agregados que miran mas de una
 /// columna (covarianza). `workers` se reparte los bloques como en esa funcion.
 ///
+/// Con un solo trabajador, o con un solo bloque, no se lanza ningun hilo. Nunca se lanzan
+/// mas hilos que bloques. Si falla algun bloque, se devuelve el error del bloque de menor
+/// indice, sea cual sea el hilo que lo encontro; los demas hilos terminan su tramo.
+///
 /// # Errors
 /// [`Error::InvalidArgument`] si `workers` es 0; ademas los de `compute`.
-pub fn fold_blocks<S>(
+///
+/// # Panics
+/// Si `compute` hace `panic` en un hilo, el `panic` se relanza en el hilo que llama.
+pub fn fold_blocks<S: Send>(
     len: usize,
     workers: usize,
     init: impl Fn() -> S,
-    compute: impl Fn(usize, usize) -> Result<S, Error>,
+    compute: impl Fn(usize, usize) -> Result<S, Error> + Sync,
     merge: impl Fn(S, S) -> S,
 ) -> Result<S, Error> {
     if workers == 0 {
@@ -117,15 +126,58 @@ pub fn fold_blocks<S>(
         ));
     }
     let blocks = len.div_ceil(BLOCK);
+    let threads = workers.min(blocks);
+    let compute_block = |index: usize| {
+        let offset = index * BLOCK;
+        compute(offset, BLOCK.min(len - offset))
+    };
     // Cada trabajador deja su estado en la posicion del bloque, no en la suya.
-    let mut states: Vec<Option<S>> = (0..blocks).map(|_| None).collect();
-    for worker in 0..workers {
-        for index in (worker..blocks).step_by(workers) {
-            let offset = index * BLOCK;
-            states[index] = Some(compute(offset, BLOCK.min(len - offset))?);
+    let mut results: Vec<Option<Result<S, Error>>> = (0..blocks).map(|_| None).collect();
+    if threads <= 1 {
+        for (index, slot) in results.iter_mut().enumerate() {
+            *slot = Some(compute_block(index));
+        }
+    } else {
+        let compute_block = &compute_block;
+        let done = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..threads)
+                .map(|worker| {
+                    scope.spawn(move || {
+                        let mut mine = Vec::new();
+                        for index in (worker..blocks).step_by(threads) {
+                            let result = compute_block(index);
+                            let failed = result.is_err();
+                            mine.push((index, result));
+                            if failed {
+                                break;
+                            }
+                        }
+                        mine
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(std::thread::ScopedJoinHandle::join)
+                .collect::<Vec<_>>()
+        });
+        for joined in done {
+            match joined {
+                Ok(mine) => {
+                    for (index, result) in mine {
+                        results[index] = Some(result);
+                    }
+                }
+                Err(payload) => std::panic::resume_unwind(payload),
+            }
         }
     }
-    let ordered: Vec<S> = states.into_iter().flatten().collect();
+    // Un hilo que fallo deja huecos detras de su error; el primer `None` solo aparece
+    // despues de un `Err` de indice menor, asi que el recorrido en orden lo encuentra antes.
+    let mut ordered = Vec::with_capacity(blocks);
+    for result in results.into_iter().flatten() {
+        ordered.push(result?);
+    }
     Ok(merge_tree(ordered, &init, &merge))
 }
 

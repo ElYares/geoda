@@ -9,6 +9,8 @@ repository.workspace = true
 
 [dependencies]
 geoda-algo = { path = "../crates/algo" }
+geoda-core = { path = "../crates/core" }
+geoda-stats = { path = "../crates/stats" }
 
 [lints]
 workspace = true
