@@ -20,12 +20,24 @@ pub use aggregate::{
     Aggregate, BLOCK, aggregate, aggregate_with_workers, fold_blocks, for_each_valid,
 };
 pub use basic::{
-    Count, Max, Mean, Min, Number, Sum, count_column, max_column, mean_column, min_column,
-    sum_column,
+    Count, Max, Mean, Min, Number, Sum, count_column, max_column, max_column_with_workers,
+    mean_column, mean_column_with_workers, min_column, min_column_with_workers, sum_column,
+    sum_column_with_workers,
 };
-pub use covariance::{Correlation, Covariance, correlation_columns, covariance_columns};
+pub use covariance::{
+    Correlation, Covariance, correlation_columns, correlation_columns_with_workers,
+    covariance_columns,
+};
 pub use geoda_algo::{Method, median_column, percentile_column};
-pub use group::{GroupOp, GroupResult, GroupValues, Grouped, group_aggregate, group_by};
-pub use histogram::{Histogram, HistogramData, MAX_BINS, histogram_column};
+pub use group::{
+    GroupOp, GroupResult, GroupValues, Grouped, group_aggregate, group_aggregate_with_workers,
+    group_by, group_by_with_workers,
+};
+pub use histogram::{
+    Histogram, HistogramData, MAX_BINS, histogram_column, histogram_column_with_workers,
+};
 pub use stream::{Accumulator, aggregate_chunks};
-pub use variance::{StdDev, Variance, std_dev_column, variance_column};
+pub use variance::{
+    StdDev, Variance, std_dev_column, std_dev_column_with_workers, variance_column,
+    variance_column_with_workers,
+};

@@ -25,7 +25,7 @@
 
 use geoda_core::{Column, DataType, Error};
 
-use crate::aggregate::{Aggregate, aggregate};
+use crate::aggregate::{Aggregate, aggregate_with_workers};
 use crate::basic::{Kind, check_block, for_each_int, kind_of, pairwise_sum, valid_floats};
 
 /// Cuenta, media y suma de cuadrados de desviaciones de un tramo de la columna.
@@ -186,7 +186,20 @@ impl Aggregate for StdDev {
 /// - [`Error::Unsupported`] para `Bool` y `Utf8`.
 /// - [`Error::InvalidArgument`] si no hay valores validos o `ddof >= n`.
 pub fn variance_column(column: &Column, ddof: usize) -> Result<f64, Error> {
-    aggregate(&Variance::new(column.dtype(), ddof)?, column)
+    variance_column_with_workers(column, ddof, 1)
+}
+
+/// Como [`variance_column`], repartiendo los bloques entre `workers` hilos. El resultado no
+/// depende de `workers`.
+///
+/// # Errors
+/// [`Error::InvalidArgument`] si `workers` es 0; ademas los de [`variance_column`].
+pub fn variance_column_with_workers(
+    column: &Column,
+    ddof: usize,
+    workers: usize,
+) -> Result<f64, Error> {
+    aggregate_with_workers(&Variance::new(column.dtype(), ddof)?, column, workers)
 }
 
 /// Desviacion estandar de una columna numerica con `ddof` grados de libertad restados.
@@ -194,5 +207,18 @@ pub fn variance_column(column: &Column, ddof: usize) -> Result<f64, Error> {
 /// # Errors
 /// Los mismos que [`variance_column`].
 pub fn std_dev_column(column: &Column, ddof: usize) -> Result<f64, Error> {
-    aggregate(&StdDev::new(column.dtype(), ddof)?, column)
+    std_dev_column_with_workers(column, ddof, 1)
+}
+
+/// Como [`std_dev_column`], repartiendo los bloques entre `workers` hilos. El resultado no
+/// depende de `workers`.
+///
+/// # Errors
+/// [`Error::InvalidArgument`] si `workers` es 0; ademas los de [`std_dev_column`].
+pub fn std_dev_column_with_workers(
+    column: &Column,
+    ddof: usize,
+    workers: usize,
+) -> Result<f64, Error> {
+    aggregate_with_workers(&StdDev::new(column.dtype(), ddof)?, column, workers)
 }

@@ -450,6 +450,14 @@ fn usize_arg(case: &Value, name: &str) -> Result<usize, String> {
         .ok_or_else(|| format!("args.{name} falta o no es un entero >= 0"))
 }
 
+/// `args.workers`: hilos de la operacion; si falta, 1. Acepta 0 para probar el error.
+fn workers_arg(case: &Value) -> Result<usize, String> {
+    match case["args"].get("workers") {
+        None | Some(Value::Null) => Ok(1),
+        Some(_) => usize_arg(case, "workers"),
+    }
+}
+
 /// Recoge los handles que la capi dejo en los `out`; si fallo, todos deben ser NULL.
 fn collect_outs(code: i32, outs: &[*mut GeodaColumn]) -> Result<OpResult, String> {
     if code != GEODA_OK {
@@ -486,6 +494,7 @@ fn run_histogram(case: &Value, handle: &Handle) -> Result<OpResult, String> {
             range.is_some(),
             lo,
             hi,
+            workers_arg(case)?,
             edges,
             counts,
             outside,
@@ -517,8 +526,17 @@ fn run_group_by(case: &Value, handle: &Handle) -> Result<OpResult, String> {
     let mut outs = [ptr::null_mut::<GeodaColumn>(); 2];
     let [out_keys, out_values] = &mut outs;
     // SAFETY: handles validos y `out` escribibles.
-    let code =
-        unsafe { geoda_column_group_by(handle.0, values.0, agg, ddof, out_keys, out_values) };
+    let code = unsafe {
+        geoda_column_group_by(
+            handle.0,
+            values.0,
+            agg,
+            ddof,
+            workers_arg(case)?,
+            out_keys,
+            out_values,
+        )
+    };
     collect_outs(code, &outs)
 }
 
@@ -532,22 +550,23 @@ fn run_scalar(op: &str, case: &Value, handle: &Handle) -> Result<OpResult, Strin
             .and_then(|n| usize::try_from(n).ok())
             .ok_or_else(|| "args.ddof falta o no es un entero >= 0".to_string())
     };
+    let workers = workers_arg(case)?;
     let (mut int, mut float) = (0_i64, 0.0_f64);
     // SAFETY: handle valido y cada `out` escribible.
     let code = unsafe {
         match (op, int_input) {
             ("count", _) => geoda_column_count(handle.0, &raw mut int),
-            ("sum", true) => geoda_column_sum_i64(handle.0, &raw mut int),
-            ("sum", false) => geoda_column_sum_f64(handle.0, &raw mut float),
-            ("min", true) => geoda_column_min_i64(handle.0, &raw mut int),
-            ("min", false) => geoda_column_min_f64(handle.0, &raw mut float),
-            ("max", true) => geoda_column_max_i64(handle.0, &raw mut int),
-            ("max", false) => geoda_column_max_f64(handle.0, &raw mut float),
-            ("mean", _) => geoda_column_mean(handle.0, &raw mut float),
-            ("var", _) => geoda_column_var(handle.0, ddof()?, &raw mut float),
-            ("std", _) => geoda_column_std(handle.0, ddof()?, &raw mut float),
+            ("sum", true) => geoda_column_sum_i64(handle.0, workers, &raw mut int),
+            ("sum", false) => geoda_column_sum_f64(handle.0, workers, &raw mut float),
+            ("min", true) => geoda_column_min_i64(handle.0, workers, &raw mut int),
+            ("min", false) => geoda_column_min_f64(handle.0, workers, &raw mut float),
+            ("max", true) => geoda_column_max_i64(handle.0, workers, &raw mut int),
+            ("max", false) => geoda_column_max_f64(handle.0, workers, &raw mut float),
+            ("mean", _) => geoda_column_mean(handle.0, workers, &raw mut float),
+            ("var", _) => geoda_column_var(handle.0, ddof()?, workers, &raw mut float),
+            ("std", _) => geoda_column_std(handle.0, ddof()?, workers, &raw mut float),
             ("corr", _) => match import_through_capi(case.get("input2").ok_or("input2 falta")?)? {
-                Ok(other) => geoda_column_corr(handle.0, other.0, &raw mut float),
+                Ok(other) => geoda_column_corr(handle.0, other.0, workers, &raw mut float),
                 Err(code) => code,
             },
             _ => return Err(format!("op escalar desconocida: {op:?}")),

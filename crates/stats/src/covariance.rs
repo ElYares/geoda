@@ -255,5 +255,18 @@ pub fn covariance_columns(x: &Column, y: &Column, ddof: usize) -> Result<f64, Er
 /// # Errors
 /// Los de [`Correlation::new`] y [`Correlation::compute`].
 pub fn correlation_columns(x: &Column, y: &Column) -> Result<f64, Error> {
-    Correlation::new(x.dtype(), y.dtype())?.compute(x, y)
+    correlation_columns_with_workers(x, y, 1)
+}
+
+/// Como [`correlation_columns`], repartiendo los bloques entre `workers` hilos. El
+/// resultado no depende de `workers`.
+///
+/// # Errors
+/// [`Error::InvalidArgument`] si `workers` es 0; ademas los de [`correlation_columns`].
+pub fn correlation_columns_with_workers(
+    x: &Column,
+    y: &Column,
+    workers: usize,
+) -> Result<f64, Error> {
+    Correlation::new(x.dtype(), y.dtype())?.compute_with_workers(x, y, workers)
 }

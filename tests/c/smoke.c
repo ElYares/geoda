@@ -136,31 +136,31 @@ int main(void) {
     int64_t entero = -1;
     CHECK(geoda_column_count(col, &entero) == GEODA_OK);
     CHECK(entero == 2);
-    CHECK(geoda_column_sum_i64(col, &entero) == GEODA_OK);
+    CHECK(geoda_column_sum_i64(col, 1, &entero) == GEODA_OK);
     CHECK(entero == 40);
-    CHECK(geoda_column_min_i64(col, &entero) == GEODA_OK);
+    CHECK(geoda_column_min_i64(col, 1, &entero) == GEODA_OK);
     CHECK(entero == 10);
-    CHECK(geoda_column_max_i64(col, &entero) == GEODA_OK);
+    CHECK(geoda_column_max_i64(col, 1, &entero) == GEODA_OK);
     CHECK(entero == 30);
-    CHECK(geoda_column_mean(col, &valor) == GEODA_OK);
+    CHECK(geoda_column_mean(col, 1, &valor) == GEODA_OK);
     CHECK(valor == 20.0);
-    CHECK(geoda_column_var(col, 1, &valor) == GEODA_OK);
+    CHECK(geoda_column_var(col, 1, 1, &valor) == GEODA_OK);
     CHECK(valor == 200.0);
-    CHECK(geoda_column_std(col, 0, &valor) == GEODA_OK);
+    CHECK(geoda_column_std(col, 0, 1, &valor) == GEODA_OK);
     CHECK(valor == 10.0);
     valor = -1.0;
-    CHECK(geoda_column_sum_f64(col, &valor) == GEODA_ERR_TYPE_MISMATCH);
+    CHECK(geoda_column_sum_f64(col, 1, &valor) == GEODA_ERR_TYPE_MISMATCH);
     CHECK(valor == -1.0);
     CHECK(strlen(geoda_last_error_message()) > 0);
     /* ddof >= n valores validos, sin escribir `out`. */
-    CHECK(geoda_column_var(col, 2, &valor) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_column_var(col, 2, 1, &valor) == GEODA_ERR_INVALID_ARGUMENT);
     CHECK(valor == -1.0);
     /* Correlacion de una columna consigo misma, y punteros NULL. */
-    CHECK(geoda_column_corr(col, col, &valor) == GEODA_OK);
+    CHECK(geoda_column_corr(col, col, 1, &valor) == GEODA_OK);
     CHECK(valor > 0.999999 && valor <= 1.0);
-    CHECK(geoda_column_corr(col, NULL, &valor) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_column_corr(col, NULL, 1, &valor) == GEODA_ERR_INVALID_ARGUMENT);
     CHECK(geoda_column_count(NULL, &entero) == GEODA_ERR_INVALID_ARGUMENT);
-    CHECK(geoda_column_mean(col, NULL) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_column_mean(col, 1, NULL) == GEODA_ERR_INVALID_ARGUMENT);
     geoda_column_free(col);
     schema.release(&schema);
 
@@ -169,44 +169,49 @@ int main(void) {
     int64_con_un_nulo(&schema, &array);
     CHECK(geoda_column_from_arrow(&schema, &array, &col) == GEODA_OK);
     struct GeodaColumn *bordes = NULL, *conteos = NULL, *fuera = NULL;
-    CHECK(geoda_column_histogram(col, 2, false, 0.0, 0.0, &bordes, &conteos, &fuera) == GEODA_OK);
+    CHECK(geoda_column_histogram(col, 2, false, 0.0, 0.0, 1, &bordes, &conteos, &fuera) == GEODA_OK);
     CHECK(geoda_column_len(bordes) == 3 && geoda_column_len(conteos) == 2);
     CHECK(geoda_column_len(fuera) == 4);
-    CHECK(geoda_column_min_f64(bordes, &valor) == GEODA_OK && valor == 10.0);
-    CHECK(geoda_column_max_f64(bordes, &valor) == GEODA_OK && valor == 30.0);
-    CHECK(geoda_column_sum_i64(conteos, &entero) == GEODA_OK && entero == 2);
-    CHECK(geoda_column_sum_i64(fuera, &entero) == GEODA_OK && entero == 1); /* un nulo */
+    CHECK(geoda_column_min_f64(bordes, 1, &valor) == GEODA_OK && valor == 10.0);
+    CHECK(geoda_column_max_f64(bordes, 1, &valor) == GEODA_OK && valor == 30.0);
+    CHECK(geoda_column_sum_i64(conteos, 1, &entero) == GEODA_OK && entero == 2);
+    CHECK(geoda_column_sum_i64(fuera, 1, &entero) == GEODA_OK && entero == 1); /* un nulo */
     geoda_column_free(bordes);
     geoda_column_free(conteos);
     geoda_column_free(fuera);
     /* Con rango explicito [0, 20]: el 30 cae fuera (`above`). */
-    CHECK(geoda_column_histogram(col, 2, true, 0.0, 20.0, &bordes, &conteos, &fuera) == GEODA_OK);
-    CHECK(geoda_column_max_i64(fuera, &entero) == GEODA_OK && entero == 1);
+    CHECK(geoda_column_histogram(col, 2, true, 0.0, 20.0, 1, &bordes, &conteos, &fuera) == GEODA_OK);
+    CHECK(geoda_column_max_i64(fuera, 1, &entero) == GEODA_OK && entero == 1);
     geoda_column_free(bordes);
     geoda_column_free(conteos);
     geoda_column_free(fuera);
     bordes = conteos = fuera = (struct GeodaColumn *)1;
-    CHECK(geoda_column_histogram(col, 0, false, 0.0, 0.0, &bordes, &conteos, &fuera) ==
+    CHECK(geoda_column_histogram(col, 0, false, 0.0, 0.0, 1, &bordes, &conteos, &fuera) ==
           GEODA_ERR_INVALID_ARGUMENT);
     CHECK(bordes == NULL && conteos == NULL && fuera == NULL);
     CHECK(strlen(geoda_last_error_message()) > 0);
-    CHECK(geoda_column_histogram(col, 2, false, 0.0, 0.0, NULL, &conteos, &fuera) ==
+    CHECK(geoda_column_histogram(col, 2, false, 0.0, 0.0, 1, NULL, &conteos, &fuera) ==
           GEODA_ERR_INVALID_ARGUMENT);
 
     /* Agregado por grupo: las claves son [10, NULL, 30] y los valores, los mismos. Salen dos
        columnas nuevas: claves (con el grupo nulo) y resultados. */
     struct GeodaColumn *claves = NULL, *resultados = NULL;
-    CHECK(geoda_column_group_by(col, col, GEODA_AGG_SUM, 0, &claves, &resultados) == GEODA_OK);
+    CHECK(geoda_column_group_by(col, col, GEODA_AGG_SUM, 0, 1, &claves, &resultados) == GEODA_OK);
     CHECK(geoda_column_len(claves) == 3 && geoda_column_null_count(claves) == 1);
-    CHECK(geoda_column_sum_i64(resultados, &entero) == GEODA_OK && entero == 40);
+    CHECK(geoda_column_sum_i64(resultados, 1, &entero) == GEODA_OK && entero == 40);
     geoda_column_free(claves);
     geoda_column_free(resultados);
     claves = resultados = (struct GeodaColumn *)1;
-    CHECK(geoda_column_group_by(col, col, 99, 0, &claves, &resultados) ==
+    CHECK(geoda_column_group_by(col, col, 99, 0, 1, &claves, &resultados) ==
           GEODA_ERR_INVALID_ARGUMENT);
     CHECK(claves == NULL && resultados == NULL);
-    CHECK(geoda_column_group_by(col, NULL, GEODA_AGG_SUM, 0, &claves, &resultados) ==
+    CHECK(geoda_column_group_by(col, NULL, GEODA_AGG_SUM, 0, 1, &claves, &resultados) ==
           GEODA_ERR_INVALID_ARGUMENT);
+    /* Hilos: con varios el resultado es el mismo; `workers = 0` es INVALID_ARGUMENT y no
+       escribe `out`. */
+    CHECK(geoda_column_sum_i64(col, 4, &entero) == GEODA_OK && entero == 40);
+    valor = -1.0;
+    CHECK(geoda_column_mean(col, 0, &valor) == GEODA_ERR_INVALID_ARGUMENT && valor == -1.0);
     geoda_column_free(col);
     schema.release(&schema);
 

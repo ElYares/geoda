@@ -25,42 +25,45 @@ class GroupBy:
     listas del mismo largo: `keys` (en orden de primera aparicion; `None` es el grupo de
     claves nulas) y `values`. Las claves nulas forman su propio grupo; todos los `NaN` son un
     grupo y `-0.0` y `0.0` son grupos distintos.
+
+    `workers` (por defecto 1) reparte entre hilos los bloques de cada grupo: el resultado no
+    depende de el, pero un grupo de un solo bloque (1024 valores) no lanza hilos.
     """
 
     def __init__(self, keys):
         self._keys = keys
 
-    def _run(self, agg, values, ddof=1):
-        keys, results = _geoda.group_aggregate(self._keys, values, agg, ddof)
+    def _run(self, agg, values, ddof=1, workers=1):
+        keys, results = _geoda.group_aggregate(self._keys, values, agg, ddof, workers)
         return {"keys": keys, "values": results}
 
-    def count(self, values):
+    def count(self, values, workers=1):
         """Valores no nulos de `values` en cada grupo."""
-        return self._run("count", values)
+        return self._run("count", values, workers=workers)
 
-    def sum(self, values):
+    def sum(self, values, workers=1):
         """Suma por grupo (`int` si `values` es una columna Arrow entera)."""
-        return self._run("sum", values)
+        return self._run("sum", values, workers=workers)
 
-    def min(self, values):
+    def min(self, values, workers=1):
         """Minimo por grupo."""
-        return self._run("min", values)
+        return self._run("min", values, workers=workers)
 
-    def max(self, values):
+    def max(self, values, workers=1):
         """Maximo por grupo."""
-        return self._run("max", values)
+        return self._run("max", values, workers=workers)
 
-    def mean(self, values):
+    def mean(self, values, workers=1):
         """Media por grupo."""
-        return self._run("mean", values)
+        return self._run("mean", values, workers=workers)
 
-    def var(self, values, ddof=1):
+    def var(self, values, ddof=1, workers=1):
         """Varianza por grupo con `ddof` grados de libertad restados (por defecto 1)."""
-        return self._run("var", values, ddof)
+        return self._run("var", values, ddof, workers)
 
-    def std(self, values, ddof=1):
+    def std(self, values, ddof=1, workers=1):
         """Desviacion estandar por grupo con `ddof` grados de libertad restados."""
-        return self._run("std", values, ddof)
+        return self._run("std", values, ddof, workers)
 
 
 def group_by(keys):

@@ -199,19 +199,25 @@ int32_t geoda_column_count(const struct GeodaColumn *column, int64_t *out);
 // `GEODA_ERR_OUT_OF_BOUNDS` si la suma no cabe en `i64`, `GEODA_ERR_TYPE_MISMATCH` para
 // `Float64` (usar `geoda_column_sum_f64`) y `GEODA_ERR_UNSUPPORTED` para `Bool` y `Utf8`.
 //
+// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+// `GEODA_ERR_INVALID_ARGUMENT`.
+//
 // # Safety
 // `column` debe ser un handle valido y `out` debe ser escribible. Ninguno puede ser NULL
 // (si lo es, se devuelve un error).
-int32_t geoda_column_sum_i64(const struct GeodaColumn *column, int64_t *out);
+int32_t geoda_column_sum_i64(const struct GeodaColumn *column, size_t workers, int64_t *out);
 
 // Suma de una columna `Float64`, en `*out`. Sin valores validos es 0; un `NaN` da `NaN`.
 //
 // Los nulos se ignoran. `GEODA_ERR_TYPE_MISMATCH` para `Int32` e `Int64` (usar
 // `geoda_column_sum_i64`); el resto de errores, como en `geoda_column_sum_i64`.
 //
+// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+// `GEODA_ERR_INVALID_ARGUMENT`.
+//
 // # Safety
 // Igual que `geoda_column_sum_i64`.
-int32_t geoda_column_sum_f64(const struct GeodaColumn *column, double *out);
+int32_t geoda_column_sum_f64(const struct GeodaColumn *column, size_t workers, double *out);
 
 // Minimo de una columna `Int32` o `Int64`, en `*out` (`i64`).
 //
@@ -219,32 +225,44 @@ int32_t geoda_column_sum_f64(const struct GeodaColumn *column, double *out);
 // `GEODA_ERR_INVALID_ARGUMENT` sin valores validos, `GEODA_ERR_TYPE_MISMATCH` para
 // `Float64` (usar `geoda_column_min_f64`) y `GEODA_ERR_UNSUPPORTED` para `Bool` y `Utf8`.
 //
+// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+// `GEODA_ERR_INVALID_ARGUMENT`.
+//
 // # Safety
 // `column` debe ser un handle valido y `out` debe ser escribible. Ninguno puede ser NULL
 // (si lo es, se devuelve un error).
-int32_t geoda_column_min_i64(const struct GeodaColumn *column, int64_t *out);
+int32_t geoda_column_min_i64(const struct GeodaColumn *column, size_t workers, int64_t *out);
 
 // Minimo de una columna `Float64`, en `*out`. Un `NaN` en la columna da `NaN`.
 //
 // Mismas reglas que `geoda_column_min_i64`, con `GEODA_ERR_TYPE_MISMATCH` para `Int32` e
 // `Int64`.
 //
+// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+// `GEODA_ERR_INVALID_ARGUMENT`.
+//
 // # Safety
 // Igual que `geoda_column_min_i64`.
-int32_t geoda_column_min_f64(const struct GeodaColumn *column, double *out);
+int32_t geoda_column_min_f64(const struct GeodaColumn *column, size_t workers, double *out);
 
 // Maximo de una columna `Int32` o `Int64`, en `*out` (`i64`). Mismas reglas que
 // `geoda_column_min_i64`.
 //
-// # Safety
-// Igual que `geoda_column_min_i64`.
-int32_t geoda_column_max_i64(const struct GeodaColumn *column, int64_t *out);
-
-// Maximo de una columna `Float64`, en `*out`. Mismas reglas que `geoda_column_min_f64`.
+// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+// `GEODA_ERR_INVALID_ARGUMENT`.
 //
 // # Safety
 // Igual que `geoda_column_min_i64`.
-int32_t geoda_column_max_f64(const struct GeodaColumn *column, double *out);
+int32_t geoda_column_max_i64(const struct GeodaColumn *column, size_t workers, int64_t *out);
+
+// Maximo de una columna `Float64`, en `*out`. Mismas reglas que `geoda_column_min_f64`.
+//
+// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+// `GEODA_ERR_INVALID_ARGUMENT`.
+//
+// # Safety
+// Igual que `geoda_column_min_i64`.
+int32_t geoda_column_max_f64(const struct GeodaColumn *column, size_t workers, double *out);
 
 // Media de una columna `Int32`, `Int64` o `Float64`, en `*out` (siempre `f64`).
 //
@@ -252,10 +270,13 @@ int32_t geoda_column_max_f64(const struct GeodaColumn *column, double *out);
 // no se escribe: `GEODA_ERR_INVALID_ARGUMENT` sin valores validos y
 // `GEODA_ERR_UNSUPPORTED` para `Bool` y `Utf8`.
 //
+// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+// `GEODA_ERR_INVALID_ARGUMENT`.
+//
 // # Safety
 // `column` debe ser un handle valido y `out` debe ser escribible. Ninguno puede ser NULL
 // (si lo es, se devuelve un error).
-int32_t geoda_column_mean(const struct GeodaColumn *column, double *out);
+int32_t geoda_column_mean(const struct GeodaColumn *column, size_t workers, double *out);
 
 // Varianza de una columna numerica con `ddof` grados de libertad restados (`0` =
 // poblacional, `1` = muestral), en `*out`.
@@ -264,17 +285,26 @@ int32_t geoda_column_mean(const struct GeodaColumn *column, double *out);
 // `geoda_column_mean`; ademas, `ddof >= n` (con `n` los valores validos) es
 // `GEODA_ERR_INVALID_ARGUMENT`.
 //
+// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+// `GEODA_ERR_INVALID_ARGUMENT`.
+//
 // # Safety
 // `column` debe ser un handle valido y `out` debe ser escribible. Ninguno puede ser NULL
 // (si lo es, se devuelve un error).
-int32_t geoda_column_var(const struct GeodaColumn *column, size_t ddof, double *out);
+int32_t geoda_column_var(const struct GeodaColumn *column,
+                         size_t ddof,
+                         size_t workers,
+                         double *out);
 
 // Desviacion estandar (`sqrt` de la varianza) con `ddof` grados de libertad restados, en
 // `*out`. Mismas reglas que `geoda_column_var`.
 //
 // # Safety
 // Igual que `geoda_column_var`.
-int32_t geoda_column_std(const struct GeodaColumn *column, size_t ddof, double *out);
+int32_t geoda_column_std(const struct GeodaColumn *column,
+                         size_t ddof,
+                         size_t workers,
+                         double *out);
 
 // Correlacion de Pearson entre dos columnas numericas, en `*out`, acotada a `[-1, 1]`.
 //
@@ -283,10 +313,16 @@ int32_t geoda_column_std(const struct GeodaColumn *column, size_t ddof, double *
 // distinto, `GEODA_ERR_INVALID_ARGUMENT` si una columna es constante o no hay filas
 // validas, y `GEODA_ERR_UNSUPPORTED` para `Bool` y `Utf8`. Un `NaN` da `NaN`.
 //
+// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+// `GEODA_ERR_INVALID_ARGUMENT`.
+//
 // # Safety
 // `x`, `y` deben ser handles validos y `out` debe ser escribible. Ninguno puede ser NULL
 // (si lo es, se devuelve un error).
-int32_t geoda_column_corr(const struct GeodaColumn *x, const struct GeodaColumn *y, double *out);
+int32_t geoda_column_corr(const struct GeodaColumn *x,
+                          const struct GeodaColumn *y,
+                          size_t workers,
+                          double *out);
 
 // Histograma de ancho fijo de una columna `Int32`, `Int64` o `Float64`, con `n_bins` cubos
 // iguales. Devuelve **tres columnas nuevas** (S9):
@@ -307,6 +343,9 @@ int32_t geoda_column_corr(const struct GeodaColumn *x, const struct GeodaColumn 
 // rango esta invertido o no es finito, o no hay valores validos y `has_range` es `false`; y
 // `GEODA_ERR_UNSUPPORTED` para `Bool` y `Utf8`.
 //
+// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+// `GEODA_ERR_INVALID_ARGUMENT`.
+//
 // # Safety
 // `column` debe ser un handle valido y los tres `out` deben ser escribibles. Ninguno puede ser
 // NULL (si lo es, se devuelve un error).
@@ -315,6 +354,7 @@ int32_t geoda_column_histogram(const struct GeodaColumn *column,
                                bool has_range,
                                double lo,
                                double hi,
+                               size_t workers,
                                struct GeodaColumn **out_edges,
                                struct GeodaColumn **out_counts,
                                struct GeodaColumn **out_outside);
@@ -337,6 +377,9 @@ int32_t geoda_column_histogram(const struct GeodaColumn *column,
 // validos para `mean`/`min`/`max`/`var`/`std` (o `ddof >= n`), y `GEODA_ERR_UNSUPPORTED` si
 // `values` es `Bool` o `Utf8`.
 //
+// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+// `GEODA_ERR_INVALID_ARGUMENT`.
+//
 // # Safety
 // `keys` y `values` deben ser handles validos y los dos `out` deben ser escribibles. Ninguno
 // puede ser NULL (si lo es, se devuelve un error).
@@ -344,6 +387,7 @@ int32_t geoda_column_group_by(const struct GeodaColumn *keys,
                               const struct GeodaColumn *values,
                               int32_t agg,
                               size_t ddof,
+                              size_t workers,
                               struct GeodaColumn **out_keys,
                               struct GeodaColumn **out_values);
 

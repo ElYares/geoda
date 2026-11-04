@@ -105,17 +105,20 @@ def _load():
             ctypes.c_int32,
         ),
         "geoda_column_count": ([p_handle, ctypes.POINTER(ctypes.c_int64)], ctypes.c_int32),
-        "geoda_column_mean": ([p_handle, ctypes.POINTER(ctypes.c_double)], ctypes.c_int32),
-        "geoda_column_var": (
+        "geoda_column_mean": (
             [p_handle, ctypes.c_size_t, ctypes.POINTER(ctypes.c_double)],
+            ctypes.c_int32,
+        ),
+        "geoda_column_var": (
+            [p_handle, ctypes.c_size_t, ctypes.c_size_t, ctypes.POINTER(ctypes.c_double)],
             ctypes.c_int32,
         ),
         "geoda_column_std": (
-            [p_handle, ctypes.c_size_t, ctypes.POINTER(ctypes.c_double)],
+            [p_handle, ctypes.c_size_t, ctypes.c_size_t, ctypes.POINTER(ctypes.c_double)],
             ctypes.c_int32,
         ),
         "geoda_column_corr": (
-            [p_handle, p_handle, ctypes.POINTER(ctypes.c_double)],
+            [p_handle, p_handle, ctypes.c_size_t, ctypes.POINTER(ctypes.c_double)],
             ctypes.c_int32,
         ),
         "geoda_column_histogram": (
@@ -125,6 +128,7 @@ def _load():
                 ctypes.c_bool,
                 ctypes.c_double,
                 ctypes.c_double,
+                ctypes.c_size_t,
                 ctypes.POINTER(p_handle),
                 ctypes.POINTER(p_handle),
                 ctypes.POINTER(p_handle),
@@ -137,6 +141,7 @@ def _load():
                 p_handle,
                 ctypes.c_int32,
                 ctypes.c_size_t,
+                ctypes.c_size_t,
                 ctypes.POINTER(p_handle),
                 ctypes.POINTER(p_handle),
             ],
@@ -147,11 +152,11 @@ def _load():
     # `sum`, `min` y `max` conservan el tipo de la columna: una variante por familia.
     for stat in ("sum", "min", "max"):
         signatures[f"geoda_column_{stat}_i64"] = (
-            [p_handle, ctypes.POINTER(ctypes.c_int64)],
+            [p_handle, ctypes.c_size_t, ctypes.POINTER(ctypes.c_int64)],
             ctypes.c_int32,
         )
         signatures[f"geoda_column_{stat}_f64"] = (
-            [p_handle, ctypes.POINTER(ctypes.c_double)],
+            [p_handle, ctypes.c_size_t, ctypes.POINTER(ctypes.c_double)],
             ctypes.c_int32,
         )
     for name, (argtypes, restype) in signatures.items():
@@ -239,20 +244,26 @@ class Column:
             raise AssertionError("la capi devolvio GEODA_OK con un out NULL")
         return [Column(h) for h in handles], code
 
-    def histogram(self, n_bins, value_range=None):
+    def histogram(self, n_bins, value_range=None, workers=1):
         """`([edges, counts, outside], 0)` o `([], codigo)`. `value_range` = `(lo, hi)` o `None`."""
         outs = [ctypes.c_void_p(None) for _ in range(3)]
         lo, hi = value_range if value_range is not None else (0.0, 0.0)
         code = LIB.geoda_column_histogram(
-            self.handle, n_bins, value_range is not None, lo, hi, *(ctypes.byref(o) for o in outs)
+            self.handle,
+            n_bins,
+            value_range is not None,
+            lo,
+            hi,
+            workers,
+            *(ctypes.byref(o) for o in outs),
         )
         return Column._own(outs, code)
 
-    def group_by(self, values, agg, ddof=0):
+    def group_by(self, values, agg, ddof=0, workers=1):
         """`([keys, values], 0)` o `([], codigo)`; `self` son las claves."""
         outs = [ctypes.c_void_p(None) for _ in range(2)]
         code = LIB.geoda_column_group_by(
-            self.handle, values.handle, AGG[agg], ddof, *(ctypes.byref(o) for o in outs)
+            self.handle, values.handle, AGG[agg], ddof, workers, *(ctypes.byref(o) for o in outs)
         )
         return Column._own(outs, code)
 

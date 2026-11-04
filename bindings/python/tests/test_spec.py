@@ -76,18 +76,28 @@ def run_case(case):
                 handle.close()
 
 
+def _workers(case):
+    """`args.workers`: hilos de la operacion; si falta, 1 (0 se acepta para probar el error)."""
+    workers = case.get("args", {}).get("workers", 1)
+    if not isinstance(workers, int) or isinstance(workers, bool) or workers < 0:
+        raise CaseFailure("args.workers no es un entero >= 0")
+    return workers
+
+
 def _run_scalar(op, case, column):
     """Estadistico escalar. `sum`, `min` y `max` llaman a la variante `_i64` si la entrada
     es entera y a la `_f64` si no (ver `spec/README.md`). Devuelve `(valor, es_entero, codigo)`."""
     int_input = case["input"]["dtype"] in ("int32", "int64")
     gives_int = op == "count" or (int_input and op in ("sum", "min", "max"))
     if op in ("sum", "min", "max"):
-        value, code = column.scalar(f"{op}_{'i64' if int_input else 'f64'}", integer=int_input)
+        value, code = column.scalar(
+            f"{op}_{'i64' if int_input else 'f64'}", _workers(case), integer=int_input
+        )
     elif op in ("var", "std"):
         ddof = case.get("args", {}).get("ddof")
         if not isinstance(ddof, int) or isinstance(ddof, bool) or ddof < 0:
             raise CaseFailure("args.ddof falta o no es un entero >= 0")
-        value, code = column.scalar(op, ddof)
+        value, code = column.scalar(op, ddof, _workers(case))
     elif op == "corr":
         if "input2" not in case:
             raise CaseFailure("input2 falta")
@@ -95,11 +105,12 @@ def _run_scalar(op, case, column):
         if code != capi.OK:
             return None, False, code
         try:
-            value, code = column.scalar("corr", other.handle)
+            value, code = column.scalar("corr", other.handle, _workers(case))
         finally:
             other.close()
     else:
-        value, code = column.scalar(op, integer=gives_int)
+        args = (_workers(case),) if op == "mean" else ()
+        value, code = column.scalar(op, *args, integer=gives_int)
     return value, gives_int, code
 
 
@@ -115,7 +126,7 @@ def _run_columns(op, case, column):
             if len(value_range) != 2:
                 raise CaseFailure("args.range debe ser [lo, hi]")
             value_range = tuple(capi.parse_float(v) for v in value_range)
-        return column.histogram(n_bins, value_range)
+        return column.histogram(n_bins, value_range, _workers(case))
     agg = args.get("agg")
     if agg not in capi.AGG:
         raise CaseFailure(f"args.agg desconocido: {agg!r}")
@@ -130,7 +141,7 @@ def _run_columns(op, case, column):
     if code != capi.OK:
         return [], code
     try:
-        return column.group_by(values, agg, ddof)
+        return column.group_by(values, agg, ddof, _workers(case))
     finally:
         values.close()
 

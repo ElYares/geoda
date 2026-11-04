@@ -21,8 +21,10 @@ use geoda_algo::{Method, Value, median_column, percentile_column};
 use geoda_core::interop::arrow_c::{ArrowArray, ArrowSchema, import_column};
 use geoda_core::{Column, DataType, Error, PrimitiveBuilder};
 use geoda_stats::{
-    GroupOp, GroupValues, Number, correlation_columns, count_column, group_by, histogram_column,
-    max_column, mean_column, min_column, std_dev_column, sum_column, variance_column,
+    GroupOp, GroupValues, Number, correlation_columns_with_workers, count_column,
+    group_by_with_workers, histogram_column_with_workers, max_column_with_workers,
+    mean_column_with_workers, min_column_with_workers, std_dev_column_with_workers,
+    sum_column_with_workers, variance_column_with_workers,
 };
 
 /// Version de geoda. Todos los crates del workspace comparten version, asi que
@@ -54,6 +56,15 @@ fn value_error(e: &Error) -> PyErr {
         Error::Unsupported(_) => PyTypeError::new_err(e.to_string()),
         _ => PyValueError::new_err(e.to_string()),
     }
+}
+
+/// Hilos pedidos desde Python: un entero >= 1. Lo negativo o cero es `ValueError`, no
+/// `OverflowError`.
+fn workers_of(workers: i64) -> PyResult<usize> {
+    usize::try_from(workers)
+        .ok()
+        .filter(|&n| n >= 1)
+        .ok_or_else(|| PyValueError::new_err(format!("workers debe ser al menos 1, no {workers}")))
 }
 
 /// Columna `Float64` con una lista (`None` = nulo). Los enteros se convierten a `float`.
@@ -168,10 +179,16 @@ fn count(values: &Bound<'_, PyAny>) -> PyResult<usize> {
 /// # Errors
 /// `ValueError` si una suma entera no cabe en `int64`; `TypeError` como en `median`.
 #[pyfunction]
-fn sum<'py>(py: Python<'py>, values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+#[pyo3(signature = (values, workers=1))]
+fn sum<'py>(
+    py: Python<'py>,
+    values: &Bound<'py, PyAny>,
+    workers: i64,
+) -> PyResult<Bound<'py, PyAny>> {
     number_to_py(
         py,
-        sum_column(&input_column(values)?).map_err(|e| value_error(&e))?,
+        sum_column_with_workers(&input_column(values)?, workers_of(workers)?)
+            .map_err(|e| value_error(&e))?,
     )
 }
 
@@ -180,10 +197,16 @@ fn sum<'py>(py: Python<'py>, values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, 
 /// # Errors
 /// `ValueError` si no hay valores validos; `TypeError` como en `median`.
 #[pyfunction]
-fn min<'py>(py: Python<'py>, values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+#[pyo3(signature = (values, workers=1))]
+fn min<'py>(
+    py: Python<'py>,
+    values: &Bound<'py, PyAny>,
+    workers: i64,
+) -> PyResult<Bound<'py, PyAny>> {
     number_to_py(
         py,
-        min_column(&input_column(values)?).map_err(|e| value_error(&e))?,
+        min_column_with_workers(&input_column(values)?, workers_of(workers)?)
+            .map_err(|e| value_error(&e))?,
     )
 }
 
@@ -192,10 +215,16 @@ fn min<'py>(py: Python<'py>, values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, 
 /// # Errors
 /// `ValueError` si no hay valores validos; `TypeError` como en `median`.
 #[pyfunction]
-fn max<'py>(py: Python<'py>, values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+#[pyo3(signature = (values, workers=1))]
+fn max<'py>(
+    py: Python<'py>,
+    values: &Bound<'py, PyAny>,
+    workers: i64,
+) -> PyResult<Bound<'py, PyAny>> {
     number_to_py(
         py,
-        max_column(&input_column(values)?).map_err(|e| value_error(&e))?,
+        max_column_with_workers(&input_column(values)?, workers_of(workers)?)
+            .map_err(|e| value_error(&e))?,
     )
 }
 
@@ -204,8 +233,10 @@ fn max<'py>(py: Python<'py>, values: &Bound<'py, PyAny>) -> PyResult<Bound<'py, 
 /// # Errors
 /// `ValueError` si no hay valores validos; `TypeError` como en `median`.
 #[pyfunction]
-fn mean(values: &Bound<'_, PyAny>) -> PyResult<f64> {
-    mean_column(&input_column(values)?).map_err(|e| value_error(&e))
+#[pyo3(signature = (values, workers=1))]
+fn mean(values: &Bound<'_, PyAny>, workers: i64) -> PyResult<f64> {
+    mean_column_with_workers(&input_column(values)?, workers_of(workers)?)
+        .map_err(|e| value_error(&e))
 }
 
 /// Varianza con `ddof` grados de libertad restados. Por defecto `ddof=1` (muestral, como R y
@@ -214,9 +245,10 @@ fn mean(values: &Bound<'_, PyAny>) -> PyResult<f64> {
 /// # Errors
 /// `ValueError` si no hay valores validos o `ddof >= n`; `TypeError` como en `median`.
 #[pyfunction]
-#[pyo3(signature = (values, ddof=1))]
-fn var(values: &Bound<'_, PyAny>, ddof: usize) -> PyResult<f64> {
-    variance_column(&input_column(values)?, ddof).map_err(|e| value_error(&e))
+#[pyo3(signature = (values, ddof=1, workers=1))]
+fn var(values: &Bound<'_, PyAny>, ddof: usize, workers: i64) -> PyResult<f64> {
+    variance_column_with_workers(&input_column(values)?, ddof, workers_of(workers)?)
+        .map_err(|e| value_error(&e))
 }
 
 /// Desviacion estandar (`sqrt` de la varianza) con `ddof` grados de libertad restados
@@ -225,9 +257,10 @@ fn var(values: &Bound<'_, PyAny>, ddof: usize) -> PyResult<f64> {
 /// # Errors
 /// Los de `var`.
 #[pyfunction]
-#[pyo3(name = "std", signature = (values, ddof=1))]
-fn std_dev(values: &Bound<'_, PyAny>, ddof: usize) -> PyResult<f64> {
-    std_dev_column(&input_column(values)?, ddof).map_err(|e| value_error(&e))
+#[pyo3(name = "std", signature = (values, ddof=1, workers=1))]
+fn std_dev(values: &Bound<'_, PyAny>, ddof: usize, workers: i64) -> PyResult<f64> {
+    std_dev_column_with_workers(&input_column(values)?, ddof, workers_of(workers)?)
+        .map_err(|e| value_error(&e))
 }
 
 /// Correlacion de Pearson entre dos columnas, en `[-1, 1]`. Las filas con nulo en cualquiera
@@ -236,8 +269,10 @@ fn std_dev(values: &Bound<'_, PyAny>, ddof: usize) -> PyResult<f64> {
 /// # Errors
 /// `ValueError` si miden distinto o una es constante; `TypeError` como en `median`.
 #[pyfunction]
-fn corr(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<f64> {
-    correlation_columns(&input_column(x)?, &input_column(y)?).map_err(|e| value_error(&e))
+#[pyo3(signature = (x, y, workers=1))]
+fn corr(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>, workers: i64) -> PyResult<f64> {
+    correlation_columns_with_workers(&input_column(x)?, &input_column(y)?, workers_of(workers)?)
+        .map_err(|e| value_error(&e))
 }
 
 /// Histograma de ancho fijo con `bins` cubos iguales. Devuelve un `dict` con `edges`
@@ -250,14 +285,17 @@ fn corr(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<f64> {
 /// `ValueError` si `bins` es 0, el rango esta invertido o no es finito, o no hay valores
 /// validos y no se dio `range`; `TypeError` como en `median`.
 #[pyfunction]
-#[pyo3(signature = (values, bins, range=None))]
+#[pyo3(signature = (values, bins, range=None, workers=1))]
 fn histogram<'py>(
     py: Python<'py>,
     values: &Bound<'py, PyAny>,
     bins: usize,
     range: Option<(f64, f64)>,
+    workers: i64,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let h = histogram_column(&input_column(values)?, bins, range).map_err(|e| value_error(&e))?;
+    let h =
+        histogram_column_with_workers(&input_column(values)?, bins, range, workers_of(workers)?)
+            .map_err(|e| value_error(&e))?;
     let out = PyDict::new(py);
     out.set_item("edges", h.edges)?;
     out.set_item("counts", h.counts)?;
@@ -288,13 +326,14 @@ fn key_to_py<'py>(py: Python<'py>, key: Option<&Value>) -> PyResult<Bound<'py, P
 /// `ValueError` si `agg` no existe, `keys` y `values` miden distinto, un grupo no tiene valores
 /// validos para `mean`/`min`/`max`/`var`/`std` o `ddof >= n`; `TypeError` como en `median`.
 #[pyfunction]
-#[pyo3(signature = (keys, values, agg, ddof=1))]
+#[pyo3(signature = (keys, values, agg, ddof=1, workers=1))]
 fn group_aggregate<'py>(
     py: Python<'py>,
     keys: &Bound<'py, PyAny>,
     values: &Bound<'py, PyAny>,
     agg: &str,
     ddof: usize,
+    workers: i64,
 ) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>)> {
     let op = match agg {
         "count" => GroupOp::Count,
@@ -310,8 +349,14 @@ fn group_aggregate<'py>(
             )));
         }
     };
-    let result = group_by(op, ddof, &input_column(keys)?, &input_column(values)?)
-        .map_err(|e| value_error(&e))?;
+    let result = group_by_with_workers(
+        op,
+        ddof,
+        &input_column(keys)?,
+        &input_column(values)?,
+        workers_of(workers)?,
+    )
+    .map_err(|e| value_error(&e))?;
     let key_list = PyList::empty(py);
     for key in &result.keys {
         key_list.append(key_to_py(py, key.as_ref())?)?;

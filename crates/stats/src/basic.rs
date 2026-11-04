@@ -15,7 +15,7 @@
 
 use geoda_core::{Column, DataType, Error};
 
-use crate::aggregate::{Aggregate, aggregate, for_each_valid};
+use crate::aggregate::{Aggregate, aggregate, aggregate_with_workers, for_each_valid};
 
 /// Resultado de un estadistico que conserva el tipo de la columna.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -395,7 +395,16 @@ pub fn count_column(column: &Column) -> Result<usize, Error> {
 /// [`Error::Unsupported`] para `Bool` y `Utf8`; [`Error::OutOfBounds`] si la suma de una
 /// columna entera no cabe en `i64`.
 pub fn sum_column(column: &Column) -> Result<Number, Error> {
-    aggregate(&Sum::new(column.dtype())?, column)
+    sum_column_with_workers(column, 1)
+}
+
+/// Como [`sum_column`], repartiendo los bloques entre `workers` hilos. El resultado no
+/// depende de `workers`.
+///
+/// # Errors
+/// [`Error::InvalidArgument`] si `workers` es 0; ademas los de [`sum_column`].
+pub fn sum_column_with_workers(column: &Column, workers: usize) -> Result<Number, Error> {
+    aggregate_with_workers(&Sum::new(column.dtype())?, column, workers)
 }
 
 /// Media de una columna numerica, en `f64`.
@@ -404,7 +413,16 @@ pub fn sum_column(column: &Column) -> Result<Number, Error> {
 /// [`Error::Unsupported`] para `Bool` y `Utf8`; [`Error::InvalidArgument`] sin valores
 /// validos.
 pub fn mean_column(column: &Column) -> Result<f64, Error> {
-    aggregate(&Mean::new(column.dtype())?, column)
+    mean_column_with_workers(column, 1)
+}
+
+/// Como [`mean_column`], repartiendo los bloques entre `workers` hilos. El resultado no
+/// depende de `workers`.
+///
+/// # Errors
+/// [`Error::InvalidArgument`] si `workers` es 0; ademas los de [`mean_column`].
+pub fn mean_column_with_workers(column: &Column, workers: usize) -> Result<f64, Error> {
+    aggregate_with_workers(&Mean::new(column.dtype())?, column, workers)
 }
 
 /// Minimo de una columna numerica.
@@ -413,7 +431,16 @@ pub fn mean_column(column: &Column) -> Result<f64, Error> {
 /// [`Error::Unsupported`] para `Bool` y `Utf8`; [`Error::InvalidArgument`] sin valores
 /// validos.
 pub fn min_column(column: &Column) -> Result<Number, Error> {
-    aggregate(&Min::new(column.dtype())?, column)
+    min_column_with_workers(column, 1)
+}
+
+/// Como [`min_column`], repartiendo los bloques entre `workers` hilos. El resultado no
+/// depende de `workers`.
+///
+/// # Errors
+/// [`Error::InvalidArgument`] si `workers` es 0; ademas los de [`min_column`].
+pub fn min_column_with_workers(column: &Column, workers: usize) -> Result<Number, Error> {
+    aggregate_with_workers(&Min::new(column.dtype())?, column, workers)
 }
 
 /// Maximo de una columna numerica.
@@ -422,5 +449,14 @@ pub fn min_column(column: &Column) -> Result<Number, Error> {
 /// [`Error::Unsupported`] para `Bool` y `Utf8`; [`Error::InvalidArgument`] sin valores
 /// validos.
 pub fn max_column(column: &Column) -> Result<Number, Error> {
-    aggregate(&Max::new(column.dtype())?, column)
+    max_column_with_workers(column, 1)
+}
+
+/// Como [`max_column`], repartiendo los bloques entre `workers` hilos. El resultado no
+/// depende de `workers`.
+///
+/// # Errors
+/// [`Error::InvalidArgument`] si `workers` es 0; ademas los de [`max_column`].
+pub fn max_column_with_workers(column: &Column, workers: usize) -> Result<Number, Error> {
+    aggregate_with_workers(&Max::new(column.dtype())?, column, workers)
 }

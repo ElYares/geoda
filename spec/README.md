@@ -39,7 +39,7 @@ coincidir: uno en Rust (`crates/capi/tests/spec.rs`, corre con
 | `input` | si | la columna de entrada: `dtype` y `values` |
 | `op` | si | la operacion (ver abajo) |
 | `input2` | `corr`, `group_by` | la segunda columna, con el mismo formato que `input` (en `group_by` son los valores; `input` son las claves) |
-| `args` | segun `op` | parametros de la operacion |
+| `args` | segun `op` | parametros de la operacion; `workers` (opcional, por defecto 1) es el numero de hilos de `sum`, `min`, `max`, `mean`, `var`, `std`, `corr`, `histogram` y `group_by`: el resultado no depende de el y `0` es `INVALID_ARGUMENT` |
 | `expect` | si | el resultado esperado, o un error |
 
 ### Tipos (`dtype`)

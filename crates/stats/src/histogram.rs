@@ -24,7 +24,7 @@
 
 use geoda_core::{Column, DataType, Error};
 
-use crate::aggregate::{Aggregate, aggregate, for_each_valid};
+use crate::aggregate::{Aggregate, aggregate_with_workers, for_each_valid};
 use crate::basic::kind_of;
 
 /// Tope de cubos: evita reservar memoria sin medida con un numero que viene de fuera.
@@ -253,12 +253,30 @@ pub fn histogram_column(
     n_bins: usize,
     range: Option<(f64, f64)>,
 ) -> Result<HistogramData, Error> {
+    histogram_column_with_workers(column, n_bins, range, 1)
+}
+
+/// Como [`histogram_column`], repartiendo los bloques entre `workers` hilos. El resultado
+/// no depende de `workers`.
+///
+/// # Errors
+/// [`Error::InvalidArgument`] si `workers` es 0; ademas los de [`histogram_column`].
+pub fn histogram_column_with_workers(
+    column: &Column,
+    n_bins: usize,
+    range: Option<(f64, f64)>,
+    workers: usize,
+) -> Result<HistogramData, Error> {
     kind_of(column.dtype())?;
     let (lo, hi) = match range {
         Some(range) => range,
-        None => aggregate(&Extent, column)?.ok_or_else(|| {
+        None => aggregate_with_workers(&Extent, column, workers)?.ok_or_else(|| {
             Error::InvalidArgument("histograma sin rango y sin valores validos".to_string())
         })?,
     };
-    aggregate(&Histogram::new(column.dtype(), n_bins, lo, hi)?, column)
+    aggregate_with_workers(
+        &Histogram::new(column.dtype(), n_bins, lo, hi)?,
+        column,
+        workers,
+    )
 }

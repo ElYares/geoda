@@ -1,0 +1,20 @@
+{
+  "spec_version": 1,
+  "id": "stats/error_mean_zero_workers",
+  "description": "HU-030: cero hilos es INVALID_ARGUMENT",
+  "input": {
+    "dtype": "int64",
+    "values": [
+      1,
+      2,
+      3
+    ]
+  },
+  "op": "mean",
+  "args": {
+    "workers": 0
+  },
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

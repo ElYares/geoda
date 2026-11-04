@@ -1,0 +1,21 @@
+{
+  "spec_version": 1,
+  "id": "stats/error_histogram_zero_workers",
+  "description": "HU-030: cero hilos es INVALID_ARGUMENT tambien en el histograma",
+  "input": {
+    "dtype": "int64",
+    "values": [
+      1,
+      2,
+      3
+    ]
+  },
+  "op": "histogram",
+  "args": {
+    "n_bins": 2,
+    "workers": 0
+  },
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

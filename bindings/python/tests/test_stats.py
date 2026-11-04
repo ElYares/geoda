@@ -114,5 +114,62 @@ class ArrowInput(unittest.TestCase):
             geoda.corr(pa.array([1, 2, 3]), pa.array([1, 2]))
 
 
+class Workers(unittest.TestCase):
+    """HU-030: `workers` reparte los bloques entre hilos sin cambiar ni un bit del resultado."""
+
+    # Varios bloques de 1024 y magnitudes muy distintas: el orden de la suma cambia los bits.
+    DATA = [math.sin(i * 0.1) * 10.0 ** (i % 13 - 6) for i in range(10_000)]
+    OTHER = [math.cos(i * 0.1) + i * 1e-4 for i in range(10_000)]
+
+    def assertSameBits(self, got, want):
+        if isinstance(want, float):
+            self.assertEqual(float.hex(got), float.hex(want))
+        else:
+            self.assertEqual(got, want)
+
+    def test_scalar_results_do_not_depend_on_workers(self):
+        calls = {
+            "sum": lambda w: geoda.sum(self.DATA, workers=w),
+            "min": lambda w: geoda.min(self.DATA, workers=w),
+            "max": lambda w: geoda.max(self.DATA, workers=w),
+            "mean": lambda w: geoda.mean(self.DATA, workers=w),
+            "var": lambda w: geoda.var(self.DATA, workers=w),
+            "std": lambda w: geoda.std(self.DATA, ddof=0, workers=w),
+            "corr": lambda w: geoda.corr(self.DATA, self.OTHER, workers=w),
+        }
+        for name, call in calls.items():
+            reference = call(1)
+            for workers in (2, 4, 8):
+                with self.subTest(name=name, workers=workers):
+                    self.assertSameBits(call(workers), reference)
+
+    def test_histogram_and_group_by_do_not_depend_on_workers(self):
+        reference = geoda.histogram(self.DATA, 10, range=(-1.0, 1.0))
+        keys = [i % 3 for i in range(10_000)]
+        grouped = geoda.group_by(keys).mean(self.DATA)
+        for workers in (2, 4, 8):
+            self.assertEqual(geoda.histogram(self.DATA, 10, range=(-1.0, 1.0), workers=workers), reference)
+            got = geoda.group_by(keys).mean(self.DATA, workers=workers)
+            self.assertEqual(got["keys"], grouped["keys"])
+            for a, b in zip(got["values"], grouped["values"]):
+                self.assertSameBits(a, b)
+
+    def test_default_is_one_worker(self):
+        self.assertSameBits(geoda.mean(self.DATA), geoda.mean(self.DATA, workers=1))
+
+    def test_zero_or_negative_workers_is_value_error(self):
+        for workers in (0, -1):
+            for call in (
+                lambda: geoda.sum([1.0, 2.0], workers=workers),
+                lambda: geoda.mean([1.0, 2.0], workers=workers),
+                lambda: geoda.var([1.0, 2.0], workers=workers),
+                lambda: geoda.corr([1.0, 2.0], [1.0, 3.0], workers=workers),
+                lambda: geoda.histogram([1.0, 2.0], 2, workers=workers),
+                lambda: geoda.group_by([1, 2]).sum([1.0, 2.0], workers=workers),
+            ):
+                with self.subTest(workers=workers), self.assertRaises(ValueError):
+                    call()
+
+
 if __name__ == "__main__":
     unittest.main()

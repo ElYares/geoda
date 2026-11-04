@@ -21,7 +21,7 @@ use geoda_algo::{Value, group_column};
 use geoda_core::memory::Native;
 use geoda_core::{BoolBuilder, Column, DataType, Error, PrimitiveBuilder, Utf8Builder};
 
-use crate::aggregate::{Aggregate, aggregate};
+use crate::aggregate::{Aggregate, aggregate_with_workers};
 use crate::basic::{Count, Max, Mean, Min, Number, Sum, kind_of};
 use crate::variance::{StdDev, Variance};
 
@@ -46,6 +46,26 @@ pub fn group_aggregate<A: Aggregate>(
     keys: &Column,
     values: &Column,
 ) -> Result<Grouped<A::Output>, Error> {
+    group_aggregate_with_workers(agg, keys, values, 1)
+}
+
+/// Como [`group_aggregate`], repartiendo entre `workers` hilos los bloques de cada grupo.
+/// El resultado no depende de `workers`. Un grupo de un solo bloque no lanza hilos, asi que
+/// con muchos grupos pequenos el efecto es nulo.
+///
+/// # Errors
+/// [`Error::InvalidArgument`] si `workers` es 0; ademas los de [`group_aggregate`].
+pub fn group_aggregate_with_workers<A: Aggregate>(
+    agg: &A,
+    keys: &Column,
+    values: &Column,
+    workers: usize,
+) -> Result<Grouped<A::Output>, Error> {
+    if workers == 0 {
+        return Err(Error::InvalidArgument(
+            "se necesita al menos un trabajador".to_string(),
+        ));
+    }
     if keys.len() != values.len() {
         return Err(Error::LengthMismatch(format!(
             "{} claves y {} valores",
@@ -61,7 +81,11 @@ pub fn group_aggregate<A: Aggregate>(
     }
     let mut results = Vec::with_capacity(rows.len());
     for group_rows in &rows {
-        results.push(aggregate(agg, &take(values, group_rows)?)?);
+        results.push(aggregate_with_workers(
+            agg,
+            &take(values, group_rows)?,
+            workers,
+        )?);
     }
     Ok(Grouped {
         keys: grouping.keys,
@@ -266,11 +290,26 @@ pub fn group_by(
     keys: &Column,
     values: &Column,
 ) -> Result<GroupResult, Error> {
+    group_by_with_workers(op, ddof, keys, values, 1)
+}
+
+/// Como [`group_by`], repartiendo entre `workers` hilos los bloques de cada grupo. El
+/// resultado no depende de `workers`.
+///
+/// # Errors
+/// [`Error::InvalidArgument`] si `workers` es 0; ademas los de [`group_by`].
+pub fn group_by_with_workers(
+    op: GroupOp,
+    ddof: usize,
+    keys: &Column,
+    values: &Column,
+    workers: usize,
+) -> Result<GroupResult, Error> {
     let dtype = values.dtype();
     let int_values = matches!(dtype, DataType::Int32 | DataType::Int64);
     let (group_keys, group_values) = match op {
         GroupOp::Count => {
-            let got = group_aggregate(&Count::new(dtype)?, keys, values)?;
+            let got = group_aggregate_with_workers(&Count::new(dtype)?, keys, values, workers)?;
             let counts = got
                 .results
                 .iter()
@@ -281,27 +320,29 @@ pub fn group_by(
             (got.keys, GroupValues::Int(counts))
         }
         GroupOp::Sum => number_values(
-            group_aggregate(&Sum::new(dtype)?, keys, values)?,
+            group_aggregate_with_workers(&Sum::new(dtype)?, keys, values, workers)?,
             int_values,
         )?,
         GroupOp::Min => number_values(
-            group_aggregate(&Min::new(dtype)?, keys, values)?,
+            group_aggregate_with_workers(&Min::new(dtype)?, keys, values, workers)?,
             int_values,
         )?,
         GroupOp::Max => number_values(
-            group_aggregate(&Max::new(dtype)?, keys, values)?,
+            group_aggregate_with_workers(&Max::new(dtype)?, keys, values, workers)?,
             int_values,
         )?,
         GroupOp::Mean => {
-            let got = group_aggregate(&Mean::new(dtype)?, keys, values)?;
+            let got = group_aggregate_with_workers(&Mean::new(dtype)?, keys, values, workers)?;
             (got.keys, GroupValues::Float(got.results))
         }
         GroupOp::Var => {
-            let got = group_aggregate(&Variance::new(dtype, ddof)?, keys, values)?;
+            let got =
+                group_aggregate_with_workers(&Variance::new(dtype, ddof)?, keys, values, workers)?;
             (got.keys, GroupValues::Float(got.results))
         }
         GroupOp::Std => {
-            let got = group_aggregate(&StdDev::new(dtype, ddof)?, keys, values)?;
+            let got =
+                group_aggregate_with_workers(&StdDev::new(dtype, ddof)?, keys, values, workers)?;
             (got.keys, GroupValues::Float(got.results))
         }
     };

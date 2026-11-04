@@ -34,6 +34,10 @@ Los nulos se ignoran. Un `NaN` en los datos da `NaN` en el resultado, nunca se o
 | `histogram(x, bins, range=None)` | `dict` con `edges`, `counts`, `below`, `above`, `nulls`, `nans` |
 | `group_by(claves).sum/count/min/max/mean/var/std(valores)` | `dict` con `keys` y `values` (listas; `None` es el grupo de claves nulas) |
 
+- **`workers` (por defecto 1)** en `sum`, `min`, `max`, `mean`, `var`, `std`, `corr`, `histogram` y
+  `group_by(...).<agg>` reparte los bloques de 1024 valores entre ese numero de hilos. El
+  resultado es idéntico bit a bit con cualquier valor; menos de 1 lanza `ValueError`. Una columna
+  de un solo bloque no lanza hilos.
 - **`ddof` por defecto es 1** (varianza muestral, como R y pandas). **NumPy usa 0**:
   `np.var(a)` y `geoda.var(a)` no coinciden; usa `geoda.var(a, ddof=0)` para igualarlos.
 - El histograma usa cubos `[a, b)` salvo el ultimo, cerrado. Lo que cae fuera de `range` se

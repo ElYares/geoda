@@ -19,8 +19,10 @@ use geoda_core::interop::arrow_c::{
 };
 use geoda_core::{Column, Error, Field, PrimitiveBuilder};
 use geoda_stats::{
-    GroupOp, Number, correlation_columns, count_column, group_by, histogram_column, max_column,
-    mean_column, min_column, std_dev_column, sum_column, variance_column,
+    GroupOp, Number, correlation_columns_with_workers, count_column, group_by_with_workers,
+    histogram_column_with_workers, max_column_with_workers, mean_column_with_workers,
+    min_column_with_workers, std_dev_column_with_workers, sum_column_with_workers,
+    variance_column_with_workers,
 };
 
 pub use error::{
@@ -333,13 +335,24 @@ pub unsafe extern "C" fn geoda_column_count(column: *const GeodaColumn, out: *mu
 /// `GEODA_ERR_OUT_OF_BOUNDS` si la suma no cabe en `i64`, `GEODA_ERR_TYPE_MISMATCH` para
 /// `Float64` (usar `geoda_column_sum_f64`) y `GEODA_ERR_UNSUPPORTED` para `Bool` y `Utf8`.
 ///
+/// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+/// `GEODA_ERR_INVALID_ARGUMENT`.
+///
 /// # Safety
 /// `column` debe ser un handle valido y `out` debe ser escribible. Ninguno puede ser NULL
 /// (si lo es, se devuelve un error).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn geoda_column_sum_i64(column: *const GeodaColumn, out: *mut i64) -> i32 {
+pub unsafe extern "C" fn geoda_column_sum_i64(
+    column: *const GeodaColumn,
+    workers: usize,
+    out: *mut i64,
+) -> i32 {
     // SAFETY: contrato de la funcion.
-    unsafe { scalar(column, out, |c| as_int(sum_column(c)?)) }
+    unsafe {
+        scalar(column, out, |c| {
+            as_int(sum_column_with_workers(c, workers)?)
+        })
+    }
 }
 
 /// Suma de una columna `Float64`, en `*out`. Sin valores validos es 0; un `NaN` da `NaN`.
@@ -347,12 +360,23 @@ pub unsafe extern "C" fn geoda_column_sum_i64(column: *const GeodaColumn, out: *
 /// Los nulos se ignoran. `GEODA_ERR_TYPE_MISMATCH` para `Int32` e `Int64` (usar
 /// `geoda_column_sum_i64`); el resto de errores, como en `geoda_column_sum_i64`.
 ///
+/// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+/// `GEODA_ERR_INVALID_ARGUMENT`.
+///
 /// # Safety
 /// Igual que `geoda_column_sum_i64`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn geoda_column_sum_f64(column: *const GeodaColumn, out: *mut f64) -> i32 {
+pub unsafe extern "C" fn geoda_column_sum_f64(
+    column: *const GeodaColumn,
+    workers: usize,
+    out: *mut f64,
+) -> i32 {
     // SAFETY: contrato de la funcion.
-    unsafe { scalar(column, out, |c| as_float(sum_column(c)?)) }
+    unsafe {
+        scalar(column, out, |c| {
+            as_float(sum_column_with_workers(c, workers)?)
+        })
+    }
 }
 
 /// Minimo de una columna `Int32` o `Int64`, en `*out` (`i64`).
@@ -361,13 +385,24 @@ pub unsafe extern "C" fn geoda_column_sum_f64(column: *const GeodaColumn, out: *
 /// `GEODA_ERR_INVALID_ARGUMENT` sin valores validos, `GEODA_ERR_TYPE_MISMATCH` para
 /// `Float64` (usar `geoda_column_min_f64`) y `GEODA_ERR_UNSUPPORTED` para `Bool` y `Utf8`.
 ///
+/// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+/// `GEODA_ERR_INVALID_ARGUMENT`.
+///
 /// # Safety
 /// `column` debe ser un handle valido y `out` debe ser escribible. Ninguno puede ser NULL
 /// (si lo es, se devuelve un error).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn geoda_column_min_i64(column: *const GeodaColumn, out: *mut i64) -> i32 {
+pub unsafe extern "C" fn geoda_column_min_i64(
+    column: *const GeodaColumn,
+    workers: usize,
+    out: *mut i64,
+) -> i32 {
     // SAFETY: contrato de la funcion.
-    unsafe { scalar(column, out, |c| as_int(min_column(c)?)) }
+    unsafe {
+        scalar(column, out, |c| {
+            as_int(min_column_with_workers(c, workers)?)
+        })
+    }
 }
 
 /// Minimo de una columna `Float64`, en `*out`. Un `NaN` en la columna da `NaN`.
@@ -375,33 +410,66 @@ pub unsafe extern "C" fn geoda_column_min_i64(column: *const GeodaColumn, out: *
 /// Mismas reglas que `geoda_column_min_i64`, con `GEODA_ERR_TYPE_MISMATCH` para `Int32` e
 /// `Int64`.
 ///
+/// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+/// `GEODA_ERR_INVALID_ARGUMENT`.
+///
 /// # Safety
 /// Igual que `geoda_column_min_i64`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn geoda_column_min_f64(column: *const GeodaColumn, out: *mut f64) -> i32 {
+pub unsafe extern "C" fn geoda_column_min_f64(
+    column: *const GeodaColumn,
+    workers: usize,
+    out: *mut f64,
+) -> i32 {
     // SAFETY: contrato de la funcion.
-    unsafe { scalar(column, out, |c| as_float(min_column(c)?)) }
+    unsafe {
+        scalar(column, out, |c| {
+            as_float(min_column_with_workers(c, workers)?)
+        })
+    }
 }
 
 /// Maximo de una columna `Int32` o `Int64`, en `*out` (`i64`). Mismas reglas que
 /// `geoda_column_min_i64`.
 ///
-/// # Safety
-/// Igual que `geoda_column_min_i64`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn geoda_column_max_i64(column: *const GeodaColumn, out: *mut i64) -> i32 {
-    // SAFETY: contrato de la funcion.
-    unsafe { scalar(column, out, |c| as_int(max_column(c)?)) }
-}
-
-/// Maximo de una columna `Float64`, en `*out`. Mismas reglas que `geoda_column_min_f64`.
+/// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+/// `GEODA_ERR_INVALID_ARGUMENT`.
 ///
 /// # Safety
 /// Igual que `geoda_column_min_i64`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn geoda_column_max_f64(column: *const GeodaColumn, out: *mut f64) -> i32 {
+pub unsafe extern "C" fn geoda_column_max_i64(
+    column: *const GeodaColumn,
+    workers: usize,
+    out: *mut i64,
+) -> i32 {
     // SAFETY: contrato de la funcion.
-    unsafe { scalar(column, out, |c| as_float(max_column(c)?)) }
+    unsafe {
+        scalar(column, out, |c| {
+            as_int(max_column_with_workers(c, workers)?)
+        })
+    }
+}
+
+/// Maximo de una columna `Float64`, en `*out`. Mismas reglas que `geoda_column_min_f64`.
+///
+/// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+/// `GEODA_ERR_INVALID_ARGUMENT`.
+///
+/// # Safety
+/// Igual que `geoda_column_min_i64`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_max_f64(
+    column: *const GeodaColumn,
+    workers: usize,
+    out: *mut f64,
+) -> i32 {
+    // SAFETY: contrato de la funcion.
+    unsafe {
+        scalar(column, out, |c| {
+            as_float(max_column_with_workers(c, workers)?)
+        })
+    }
 }
 
 /// Media de una columna `Int32`, `Int64` o `Float64`, en `*out` (siempre `f64`).
@@ -410,13 +478,20 @@ pub unsafe extern "C" fn geoda_column_max_f64(column: *const GeodaColumn, out: *
 /// no se escribe: `GEODA_ERR_INVALID_ARGUMENT` sin valores validos y
 /// `GEODA_ERR_UNSUPPORTED` para `Bool` y `Utf8`.
 ///
+/// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+/// `GEODA_ERR_INVALID_ARGUMENT`.
+///
 /// # Safety
 /// `column` debe ser un handle valido y `out` debe ser escribible. Ninguno puede ser NULL
 /// (si lo es, se devuelve un error).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn geoda_column_mean(column: *const GeodaColumn, out: *mut f64) -> i32 {
+pub unsafe extern "C" fn geoda_column_mean(
+    column: *const GeodaColumn,
+    workers: usize,
+    out: *mut f64,
+) -> i32 {
     // SAFETY: contrato de la funcion.
-    unsafe { scalar(column, out, mean_column) }
+    unsafe { scalar(column, out, |c| mean_column_with_workers(c, workers)) }
 }
 
 /// Varianza de una columna numerica con `ddof` grados de libertad restados (`0` =
@@ -426,6 +501,9 @@ pub unsafe extern "C" fn geoda_column_mean(column: *const GeodaColumn, out: *mut
 /// `geoda_column_mean`; ademas, `ddof >= n` (con `n` los valores validos) es
 /// `GEODA_ERR_INVALID_ARGUMENT`.
 ///
+/// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+/// `GEODA_ERR_INVALID_ARGUMENT`.
+///
 /// # Safety
 /// `column` debe ser un handle valido y `out` debe ser escribible. Ninguno puede ser NULL
 /// (si lo es, se devuelve un error).
@@ -433,10 +511,15 @@ pub unsafe extern "C" fn geoda_column_mean(column: *const GeodaColumn, out: *mut
 pub unsafe extern "C" fn geoda_column_var(
     column: *const GeodaColumn,
     ddof: usize,
+    workers: usize,
     out: *mut f64,
 ) -> i32 {
     // SAFETY: contrato de la funcion.
-    unsafe { scalar(column, out, |c| variance_column(c, ddof)) }
+    unsafe {
+        scalar(column, out, |c| {
+            variance_column_with_workers(c, ddof, workers)
+        })
+    }
 }
 
 /// Desviacion estandar (`sqrt` de la varianza) con `ddof` grados de libertad restados, en
@@ -448,10 +531,15 @@ pub unsafe extern "C" fn geoda_column_var(
 pub unsafe extern "C" fn geoda_column_std(
     column: *const GeodaColumn,
     ddof: usize,
+    workers: usize,
     out: *mut f64,
 ) -> i32 {
     // SAFETY: contrato de la funcion.
-    unsafe { scalar(column, out, |c| std_dev_column(c, ddof)) }
+    unsafe {
+        scalar(column, out, |c| {
+            std_dev_column_with_workers(c, ddof, workers)
+        })
+    }
 }
 
 /// Correlacion de Pearson entre dos columnas numericas, en `*out`, acotada a `[-1, 1]`.
@@ -461,6 +549,9 @@ pub unsafe extern "C" fn geoda_column_std(
 /// distinto, `GEODA_ERR_INVALID_ARGUMENT` si una columna es constante o no hay filas
 /// validas, y `GEODA_ERR_UNSUPPORTED` para `Bool` y `Utf8`. Un `NaN` da `NaN`.
 ///
+/// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+/// `GEODA_ERR_INVALID_ARGUMENT`.
+///
 /// # Safety
 /// `x`, `y` deben ser handles validos y `out` debe ser escribible. Ninguno puede ser NULL
 /// (si lo es, se devuelve un error).
@@ -468,6 +559,7 @@ pub unsafe extern "C" fn geoda_column_std(
 pub unsafe extern "C" fn geoda_column_corr(
     x: *const GeodaColumn,
     y: *const GeodaColumn,
+    workers: usize,
     out: *mut f64,
 ) -> i32 {
     // SAFETY: `as_ref` revisa NULL; la validez del handle es contrato.
@@ -475,7 +567,11 @@ pub unsafe extern "C" fn geoda_column_corr(
         return guard(|| Err(invalid_argument("y es NULL")));
     };
     // SAFETY: contrato de la funcion.
-    unsafe { scalar(x, out, |c| correlation_columns(c, other)) }
+    unsafe {
+        scalar(x, out, |c| {
+            correlation_columns_with_workers(c, other, workers)
+        })
+    }
 }
 
 /// Histograma de ancho fijo de una columna `Int32`, `Int64` o `Float64`, con `n_bins` cubos
@@ -497,6 +593,9 @@ pub unsafe extern "C" fn geoda_column_corr(
 /// rango esta invertido o no es finito, o no hay valores validos y `has_range` es `false`; y
 /// `GEODA_ERR_UNSUPPORTED` para `Bool` y `Utf8`.
 ///
+/// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+/// `GEODA_ERR_INVALID_ARGUMENT`.
+///
 /// # Safety
 /// `column` debe ser un handle valido y los tres `out` deben ser escribibles. Ninguno puede ser
 /// NULL (si lo es, se devuelve un error).
@@ -507,6 +606,7 @@ pub unsafe extern "C" fn geoda_column_histogram(
     has_range: bool,
     lo: f64,
     hi: f64,
+    workers: usize,
     out_edges: *mut *mut GeodaColumn,
     out_counts: *mut *mut GeodaColumn,
     out_outside: *mut *mut GeodaColumn,
@@ -525,7 +625,8 @@ pub unsafe extern "C" fn geoda_column_histogram(
         let Some(GeodaColumn(columna)) = (unsafe { column.as_ref() }) else {
             return Err(invalid_argument("column es NULL"));
         };
-        let h = histogram_column(columna, n_bins, has_range.then_some((lo, hi)))?;
+        let h =
+            histogram_column_with_workers(columna, n_bins, has_range.then_some((lo, hi)), workers)?;
         // Todo lo que puede fallar va antes de escribir ningun `out`: o salen las tres o ninguna.
         let mut edges = PrimitiveBuilder::<f64>::new();
         for &edge in &h.edges {
@@ -575,6 +676,9 @@ pub unsafe extern "C" fn geoda_column_histogram(
 /// validos para `mean`/`min`/`max`/`var`/`std` (o `ddof >= n`), y `GEODA_ERR_UNSUPPORTED` si
 /// `values` es `Bool` o `Utf8`.
 ///
+/// `workers` es el numero de hilos (al menos 1): el resultado no depende de el. `0` es
+/// `GEODA_ERR_INVALID_ARGUMENT`.
+///
 /// # Safety
 /// `keys` y `values` deben ser handles validos y los dos `out` deben ser escribibles. Ninguno
 /// puede ser NULL (si lo es, se devuelve un error).
@@ -584,6 +688,7 @@ pub unsafe extern "C" fn geoda_column_group_by(
     values: *const GeodaColumn,
     agg: i32,
     ddof: usize,
+    workers: usize,
     out_keys: *mut *mut GeodaColumn,
     out_values: *mut *mut GeodaColumn,
 ) -> i32 {
@@ -612,7 +717,7 @@ pub unsafe extern "C" fn geoda_column_group_by(
             GEODA_AGG_STD => GroupOp::Std,
             otro => return Err(invalid_argument(&format!("agg desconocido: {otro}"))),
         };
-        let result = group_by(op, ddof, keys, values)?;
+        let result = group_by_with_workers(op, ddof, keys, values, workers)?;
         let (key_column, value_column) = (result.keys_column()?, result.values_column()?);
         // SAFETY: los `out` son escribibles (arriba).
         unsafe {
@@ -954,12 +1059,12 @@ mod tests {
         // SAFETY: `col` es un handle valido y cada `out` es escribible.
         unsafe {
             assert_eq!(geoda_column_count(col, &raw mut n), GEODA_OK);
-            assert_eq!(geoda_column_sum_i64(col, &raw mut sum), GEODA_OK);
-            assert_eq!(geoda_column_min_i64(col, &raw mut min), GEODA_OK);
-            assert_eq!(geoda_column_max_i64(col, &raw mut max), GEODA_OK);
-            assert_eq!(geoda_column_mean(col, &raw mut mean), GEODA_OK);
-            assert_eq!(geoda_column_var(col, 0, &raw mut var), GEODA_OK);
-            assert_eq!(geoda_column_std(col, 0, &raw mut std), GEODA_OK);
+            assert_eq!(geoda_column_sum_i64(col, 1, &raw mut sum), GEODA_OK);
+            assert_eq!(geoda_column_min_i64(col, 1, &raw mut min), GEODA_OK);
+            assert_eq!(geoda_column_max_i64(col, 1, &raw mut max), GEODA_OK);
+            assert_eq!(geoda_column_mean(col, 1, &raw mut mean), GEODA_OK);
+            assert_eq!(geoda_column_var(col, 0, 1, &raw mut var), GEODA_OK);
+            assert_eq!(geoda_column_std(col, 0, 1, &raw mut std), GEODA_OK);
             geoda_column_free(col);
         }
         // Los valores validos son [4, 1, 3, 2].
@@ -976,7 +1081,7 @@ mod tests {
         // SAFETY: `col` es un handle valido y `out` es escribible.
         unsafe {
             assert_eq!(
-                geoda_column_sum_f64(col, &raw mut out),
+                geoda_column_sum_f64(col, 1, &raw mut out),
                 GEODA_ERR_TYPE_MISMATCH
             );
             assert_ne!(mensaje(), "");
@@ -992,19 +1097,19 @@ mod tests {
         // SAFETY: NULL se reporta como error; `col` es valido.
         unsafe {
             assert_eq!(
-                geoda_column_mean(ptr::null(), &raw mut out),
+                geoda_column_mean(ptr::null(), 1, &raw mut out),
                 GEODA_ERR_INVALID_ARGUMENT
             );
             assert_eq!(
-                geoda_column_var(col, 1, ptr::null_mut()),
+                geoda_column_var(col, 1, 1, ptr::null_mut()),
                 GEODA_ERR_INVALID_ARGUMENT
             );
             assert_eq!(
-                geoda_column_corr(col, ptr::null(), &raw mut out),
+                geoda_column_corr(col, ptr::null(), 1, &raw mut out),
                 GEODA_ERR_INVALID_ARGUMENT
             );
             assert_eq!(
-                geoda_column_corr(ptr::null(), col, &raw mut out),
+                geoda_column_corr(ptr::null(), col, 1, &raw mut out),
                 GEODA_ERR_INVALID_ARGUMENT
             );
             geoda_column_free(col);
@@ -1017,7 +1122,7 @@ mod tests {
         let mut out = 0.0_f64;
         // SAFETY: `col` es un handle valido y `out` es escribible.
         unsafe {
-            assert_eq!(geoda_column_corr(col, col, &raw mut out), GEODA_OK);
+            assert_eq!(geoda_column_corr(col, col, 1, &raw mut out), GEODA_OK);
             geoda_column_free(col);
         }
         assert!((out - 1.0).abs() < 1e-12, "{out}");
@@ -1037,6 +1142,7 @@ mod tests {
                     false,
                     0.0,
                     0.0,
+                    1,
                     &raw mut edges,
                     &raw mut counts,
                     &raw mut outside
@@ -1067,6 +1173,7 @@ mod tests {
                     false,
                     0.0,
                     0.0,
+                    1,
                     &raw mut edges,
                     &raw mut counts,
                     &raw mut outside
@@ -1082,6 +1189,7 @@ mod tests {
                     false,
                     0.0,
                     0.0,
+                    1,
                     ptr::null_mut(),
                     &raw mut counts,
                     &raw mut outside
@@ -1105,6 +1213,7 @@ mod tests {
                     values,
                     GEODA_AGG_SUM,
                     0,
+                    1,
                     &raw mut out_keys,
                     &raw mut out_values
                 ),
@@ -1117,7 +1226,15 @@ mod tests {
             geoda_column_free(out_keys);
             geoda_column_free(out_values);
             assert_eq!(
-                geoda_column_group_by(keys, values, 99, 0, &raw mut out_keys, &raw mut out_values),
+                geoda_column_group_by(
+                    keys,
+                    values,
+                    99,
+                    0,
+                    1,
+                    &raw mut out_keys,
+                    &raw mut out_values
+                ),
                 GEODA_ERR_INVALID_ARGUMENT
             );
             assert!(out_keys.is_null() && out_values.is_null());
