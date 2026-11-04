@@ -10,14 +10,16 @@
 //! cargo run --release -p geoda-bench              # n = 1 000 000
 //! cargo run --release -p geoda-bench -- 200000    # otro tamano de la mediana
 //! cargo run --release -p geoda-bench -- 1000000 5000000   # y otro de la varianza
+//! cargo run --release -p geoda-bench -- file 250000000    # archivo de 2 GB leido por trozos
 //! ```
 
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use geoda_algo::{median_of_medians, merge_sort, quickselect};
+use geoda_core::file::{ColumnFileReader, ColumnFileWriter};
 use geoda_core::{Column, DataType, PrimitiveBuilder};
-use geoda_stats::{Variance, aggregate_with_workers};
+use geoda_stats::{Accumulator, Histogram, Mean, Variance, aggregate_with_workers};
 
 /// Una forma de calcular la mediana de una copia de los datos.
 type MedianFn = fn(&mut [i64]) -> i64;
@@ -29,6 +31,8 @@ const SEED: u64 = 0x5EED_2026;
 const STATS_ROWS: usize = 10_000_000;
 /// Numeros de hilos que se comparan en la varianza.
 const WORKER_COUNTS: [usize; 4] = [1, 2, 4, 8];
+/// Filas por trozo al generar y al leer el archivo grande.
+const FILE_CHUNK_ROWS: usize = 64 * 1024;
 
 /// Generador pseudoaleatorio con semilla (xorshift64).
 struct Rng(u64);
@@ -153,11 +157,99 @@ fn bench_variance(n: usize) {
     }
 }
 
+/// Pico de memoria residente del proceso en MiB (`VmHWM`), solo en Linux.
+fn peak_resident_mib() -> Option<f64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let kib: f64 = status
+        .lines()
+        .find_map(|l| l.strip_prefix("VmHWM:"))?
+        .trim()
+        .trim_end_matches("kB")
+        .trim()
+        .parse()
+        .ok()?;
+    Some(kib / 1024.0)
+}
+
+/// Genera un archivo de `rows` filas `Float64`, lo lee por trozos calculando media,
+/// varianza e histograma en una sola pasada y muestra filas por segundo y memoria pico.
+fn bench_file(rows: u64, path: &std::path::Path) {
+    let mut rng = Rng(SEED);
+    let started = Instant::now();
+    let mut writer =
+        ColumnFileWriter::create(path, DataType::Float64, rows, false).expect("se crea el archivo");
+    let mut left = rows;
+    while left > 0 {
+        let n = usize::try_from(left.min(FILE_CHUNK_ROWS as u64)).expect("cabe");
+        let mut builder = PrimitiveBuilder::<f64>::new();
+        for _ in 0..n {
+            #[allow(clippy::cast_precision_loss)]
+            builder.append((rng.next() % 1_000_000_000) as f64 / 1000.0);
+        }
+        writer
+            .append(&builder.finish().expect("trozo"))
+            .expect("se escribe");
+        left -= n as u64;
+    }
+    writer.finish().expect("se cierra");
+    println!(
+        "\narchivo de {rows} filas escrito en {:.1} s ({} MiB)",
+        started.elapsed().as_secs_f64(),
+        std::fs::metadata(path).expect("existe").len() / (1024 * 1024)
+    );
+
+    let dtype = DataType::Float64;
+    let mut mean = Accumulator::new(Mean::new(dtype).expect("Float64"));
+    let mut variance = Accumulator::new(Variance::new(dtype, 1).expect("Float64"));
+    let mut histogram =
+        Accumulator::new(Histogram::new(dtype, 10, 0.0, 1_000_000.0).expect("Float64"));
+    let started = Instant::now();
+    for chunk in ColumnFileReader::open(path, FILE_CHUNK_ROWS).expect("se abre") {
+        let chunk = chunk.expect("se lee");
+        mean.push(&chunk).expect("media");
+        variance.push(&chunk).expect("varianza");
+        histogram.push(&chunk).expect("histograma");
+    }
+    let (mean, variance) = (
+        mean.finish().expect("media"),
+        variance.finish().expect("varianza"),
+    );
+    let histogram = histogram.finish().expect("histograma");
+    let elapsed = started.elapsed().as_secs_f64();
+    #[allow(clippy::cast_precision_loss)]
+    let per_second = rows as f64 / elapsed;
+    println!(
+        "lectura por trozos de {FILE_CHUNK_ROWS} filas: {elapsed:.1} s, {:.1} M filas/s",
+        per_second / 1e6
+    );
+    println!(
+        "media = {mean:.3}, varianza = {variance:.3}, cubos = {:?}",
+        histogram.counts
+    );
+    match peak_resident_mib() {
+        Some(mib) => println!("pico de memoria residente: {mib:.0} MiB"),
+        None => println!("pico de memoria residente: no disponible (solo Linux)"),
+    }
+}
+
 fn ms(d: Duration) -> String {
     format!("{:.2}", d.as_secs_f64() * 1000.0)
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("file") {
+        let rows: u64 = std::env::args().nth(2).map_or(250_000_000, |a| {
+            a.parse().expect("las filas deben ser un entero")
+        });
+        let path = std::path::PathBuf::from(
+            std::env::args()
+                .nth(3)
+                .unwrap_or_else(|| "target/bench-columna.geoda".to_string()),
+        );
+        bench_file(rows, &path);
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
     let n: usize = std::env::args()
         .nth(1)
         .map_or(1_000_000, |a| a.parse().expect("n debe ser un entero"));

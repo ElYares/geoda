@@ -121,6 +121,23 @@ impl<A: Aggregate> Accumulator<A> {
     }
 }
 
+/// Calcula `agg` sobre una serie de trozos (por ejemplo un [`geoda_core::file::ColumnFileReader`]),
+/// sin tener la columna entera en memoria.
+///
+/// # Errors
+/// El primer error que traiga la serie, y los de [`Accumulator::push`] y
+/// [`Accumulator::finish`].
+pub fn aggregate_chunks<A: Aggregate>(
+    agg: A,
+    chunks: impl IntoIterator<Item = Result<Column, Error>>,
+) -> Result<A::Output, Error> {
+    let mut acc = Accumulator::new(agg);
+    for chunk in chunks {
+        acc.push(&chunk?)?;
+    }
+    acc.finish()
+}
+
 /// Copia `head` (si hay) y `tail` en una columna nueva, en ese orden.
 fn concat(head: Option<&Column>, tail: &Column) -> Result<Column, Error> {
     let parts: Vec<&Column> = head.into_iter().chain([tail]).collect();

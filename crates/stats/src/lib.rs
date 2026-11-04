@@ -27,5 +27,5 @@ pub use covariance::{Correlation, Covariance, correlation_columns, covariance_co
 pub use geoda_algo::{Method, median_column, percentile_column};
 pub use group::{GroupOp, GroupResult, GroupValues, Grouped, group_aggregate, group_by};
 pub use histogram::{Histogram, HistogramData, MAX_BINS, histogram_column};
-pub use stream::Accumulator;
+pub use stream::{Accumulator, aggregate_chunks};
 pub use variance::{StdDev, Variance, std_dev_column, variance_column};

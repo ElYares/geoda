@@ -5,6 +5,7 @@ pub mod chunk;
 pub mod column;
 pub mod datatype;
 pub mod error;
+pub mod file;
 pub mod interop;
 pub mod memory;
 pub mod schema;
