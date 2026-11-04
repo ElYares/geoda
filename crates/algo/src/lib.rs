@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod components;
 pub mod graph;
 pub mod hash;
 pub mod heap;
@@ -14,6 +15,7 @@ pub mod select;
 pub mod sort;
 pub mod traverse;
 
+pub use components::{Components, UnionFind, components, topological_order};
 pub use graph::{Graph, WeightedGraph};
 pub use hash::{Grouping, HashTable, Key, Value, ValueCounts, group_column, value_counts_column};
 pub use heap::{Heap, top_k, top_k_column};
