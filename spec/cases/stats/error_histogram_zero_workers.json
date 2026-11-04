@@ -4,11 +4,7 @@
   "description": "HU-030: cero hilos es INVALID_ARGUMENT tambien en el histograma",
   "input": {
     "dtype": "int64",
-    "values": [
-      1,
-      2,
-      3
-    ]
+    "values": [1, 2, 3]
   },
   "op": "histogram",
   "args": {
