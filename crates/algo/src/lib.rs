@@ -12,6 +12,7 @@ pub mod percentile;
 pub mod search;
 pub mod select;
 pub mod sort;
+pub mod traverse;
 
 pub use graph::{Graph, WeightedGraph};
 pub use hash::{Grouping, HashTable, Key, Value, ValueCounts, group_column, value_counts_column};
@@ -20,3 +21,4 @@ pub use percentile::{median_column, percentile_column, percentiles_column};
 pub use search::{lower_bound, lower_bound_column, upper_bound, upper_bound_column};
 pub use select::{Method, Scalar, median_of_medians, quickselect, select_column};
 pub use sort::{merge_sort, sort_column};
+pub use traverse::{Bfs, Dfs, bfs, dfs};

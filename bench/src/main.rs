@@ -11,12 +11,13 @@
 //! cargo run --release -p geoda-bench -- 200000    # otro tamano de la mediana
 //! cargo run --release -p geoda-bench -- 1000000 5000000   # y otro de la varianza
 //! cargo run --release -p geoda-bench -- file 250000000    # archivo de 2 GB leido por trozos
+//! cargo run --release -p geoda-bench -- graph              # BFS y DFS de 1M nodos y 10M aristas
 //! ```
 
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use geoda_algo::{median_of_medians, merge_sort, quickselect};
+use geoda_algo::{Graph, bfs, dfs, median_of_medians, merge_sort, quickselect};
 use geoda_core::file::{ColumnFileReader, ColumnFileWriter};
 use geoda_core::{Column, DataType, PrimitiveBuilder};
 use geoda_stats::{Accumulator, Histogram, Mean, Variance, aggregate_with_workers};
@@ -232,11 +233,64 @@ fn bench_file(rows: u64, path: &std::path::Path) {
     }
 }
 
+/// Grafo aleatorio dirigido de `nodes` nodos y `edges` aristas con la semilla fija: se
+/// construye el CSR y se miden BFS y DFS desde el nodo 0.
+fn bench_graph(nodes: usize, edges: usize) {
+    let mut rng = Rng(SEED);
+    let list: Vec<(usize, usize)> = (0..edges)
+        .map(|_| {
+            let from = usize::try_from(rng.next() % nodes as u64).expect("cabe");
+            let to = usize::try_from(rng.next() % nodes as u64).expect("cabe");
+            (from, to)
+        })
+        .collect();
+    let started = Instant::now();
+    let graph = Graph::from_edges(nodes, &list, true).expect("el grafo se construye");
+    println!(
+        "\ngrafo aleatorio de {nodes} nodos y {edges} aristas: CSR construido en {} ms",
+        ms(started.elapsed())
+    );
+    println!("{:<10}{:>22}{:>14}", "recorrido", "tiempo", "visitados");
+    for (name, run) in [
+        (
+            "bfs",
+            (|g: &Graph| bfs(g, 0).expect("origen valido").order.len()) as fn(&Graph) -> usize,
+        ),
+        ("dfs", |g: &Graph| {
+            dfs(g, 0).expect("origen valido").entry_order.len()
+        }),
+    ] {
+        let mut visited = 0;
+        let mut times: Vec<Duration> = (0..RUNS)
+            .map(|_| {
+                let start = Instant::now();
+                visited = black_box(run(black_box(&graph)));
+                start.elapsed()
+            })
+            .collect();
+        times.sort_unstable();
+        println!(
+            "{name:<10}{:>22}{visited:>14}",
+            format!("{} / {}", ms(times[0]), ms(times[RUNS / 2]))
+        );
+    }
+}
+
 fn ms(d: Duration) -> String {
     format!("{:.2}", d.as_secs_f64() * 1000.0)
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("graph") {
+        let nodes: usize = std::env::args().nth(2).map_or(1_000_000, |a| {
+            a.parse().expect("los nodos deben ser un entero")
+        });
+        let edges: usize = std::env::args().nth(3).map_or(10_000_000, |a| {
+            a.parse().expect("las aristas deben ser un entero")
+        });
+        bench_graph(nodes, edges);
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("file") {
         let rows: u64 = std::env::args().nth(2).map_or(250_000_000, |a| {
             a.parse().expect("las filas deben ser un entero")
