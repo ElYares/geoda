@@ -12,12 +12,15 @@
 //! cargo run --release -p geoda-bench -- 1000000 5000000   # y otro de la varianza
 //! cargo run --release -p geoda-bench -- file 250000000    # archivo de 2 GB leido por trozos
 //! cargo run --release -p geoda-bench -- graph              # BFS y DFS de 1M nodos y 10M aristas
+//! cargo run --release -p geoda-bench -- graph 1000000 10000000   # incluye Dijkstra
 //! ```
 
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use geoda_algo::{Graph, bfs, dfs, median_of_medians, merge_sort, quickselect};
+use geoda_algo::{
+    Graph, WeightedGraph, bfs, dfs, dijkstra, median_of_medians, merge_sort, quickselect,
+};
 use geoda_core::file::{ColumnFileReader, ColumnFileWriter};
 use geoda_core::{Column, DataType, PrimitiveBuilder};
 use geoda_stats::{Accumulator, Histogram, Mean, Variance, aggregate_with_workers};
@@ -274,6 +277,35 @@ fn bench_graph(nodes: usize, edges: usize) {
             format!("{} / {}", ms(times[0]), ms(times[RUNS / 2]))
         );
     }
+
+    // Dijkstra con pesos enteros de 1 a 100 sobre las mismas aristas.
+    let weighted: Vec<(usize, usize, f64)> = list
+        .iter()
+        .map(|&(from, to)| {
+            (
+                from,
+                to,
+                f64::from(u32::try_from(rng.next() % 100 + 1).expect("cabe")),
+            )
+        })
+        .collect();
+    let weighted =
+        WeightedGraph::from_edges(nodes, &weighted, true).expect("el grafo se construye");
+    let mut reached = 0;
+    let mut times: Vec<Duration> = (0..RUNS)
+        .map(|_| {
+            let start = Instant::now();
+            let paths = dijkstra(black_box(&weighted), 0).expect("origen y pesos validos");
+            reached = black_box(paths.distance.iter().filter(|d| d.is_finite()).count());
+            start.elapsed()
+        })
+        .collect();
+    times.sort_unstable();
+    println!(
+        "{:<10}{:>22}{reached:>14}",
+        "dijkstra",
+        format!("{} / {}", ms(times[0]), ms(times[RUNS / 2]))
+    );
 }
 
 fn ms(d: Duration) -> String {
