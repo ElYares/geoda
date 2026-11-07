@@ -57,6 +57,100 @@ static void int64_con_un_nulo(struct ArrowSchema *s, struct ArrowArray *a) {
     a->release = release_array;
 }
 
+/* Columna sin nulos de `n` valores de 8 bytes: Int64 ("l") o Float64 ("g"). */
+static struct GeodaColumn *columna_plana(const char *formato, const void *valores, size_t n) {
+    struct ArrowSchema schema;
+    struct ArrowArray array;
+    void *datos = malloc(n * 8);
+    const void **buffers = malloc(2 * sizeof(void *));
+    memcpy(datos, valores, n * 8);
+    buffers[0] = NULL;
+    buffers[1] = datos;
+    memset(&schema, 0, sizeof schema);
+    schema.format = formato;
+    schema.name = "x";
+    schema.release = release_schema;
+    memset(&array, 0, sizeof array);
+    array.length = (long long)n;
+    array.n_buffers = 2;
+    array.buffers = buffers;
+    array.release = release_array;
+    struct GeodaColumn *col = NULL;
+    CHECK(geoda_column_from_arrow(&schema, &array, &col) == GEODA_OK);
+    schema.release(&schema);
+    return col;
+}
+
+/* Grafos: se crea uno con pesos, se consulta y se libera; los errores dejan los `out` en NULL. */
+static void prueba_grafo(void) {
+    /* 0 -> 1 (4), 0 -> 2 (1), 2 -> 1 (2), 1 -> 3 (1); el nodo 4 queda aislado. */
+    const long long desde[] = {0, 0, 2, 1}, hasta[] = {1, 2, 1, 3};
+    const double pesos[] = {4.0, 1.0, 2.0, 1.0};
+    struct GeodaColumn *from = columna_plana("l", desde, 4);
+    struct GeodaColumn *to = columna_plana("l", hasta, 4);
+    struct GeodaColumn *weights = columna_plana("g", pesos, 4);
+    struct GeodaGraph *grafo = (struct GeodaGraph *)1;
+    CHECK(geoda_graph_new(5, from, to, weights, true, &grafo) == GEODA_OK);
+    CHECK(grafo != NULL && geoda_graph_node_count(grafo) == 5);
+
+    struct GeodaColumn *distancia = NULL, *padre = NULL, *orden = NULL;
+    CHECK(geoda_graph_dijkstra(grafo, 0, &distancia, &padre) == GEODA_OK);
+    double suma = 0.0;
+    CHECK(geoda_column_len(distancia) == 5 && geoda_column_len(padre) == 5);
+    CHECK(geoda_column_null_count(padre) == 2); /* el origen y el nodo inalcanzable */
+    CHECK(geoda_column_min_f64(distancia, 1, &suma) == GEODA_OK && suma == 0.0);
+    geoda_column_free(distancia);
+    geoda_column_free(padre);
+
+    /* Un origen fuera de rango falla y deja los `out` en NULL. */
+    distancia = padre = (struct GeodaColumn *)1;
+    CHECK(geoda_graph_dijkstra(grafo, 5, &distancia, &padre) == GEODA_ERR_OUT_OF_BOUNDS);
+    CHECK(distancia == NULL && padre == NULL);
+    CHECK(strlen(geoda_last_error_message()) > 0);
+
+    struct GeodaColumn *distancias_bfs = NULL;
+    CHECK(geoda_graph_bfs(grafo, 0, &orden, &distancias_bfs, &padre) == GEODA_OK);
+    CHECK(geoda_column_len(orden) == 4 && geoda_column_len(distancias_bfs) == 5);
+    geoda_column_free(orden);
+    geoda_column_free(distancias_bfs);
+    geoda_column_free(padre);
+
+    struct GeodaColumn *ids = NULL;
+    int64_t cuantas = -1;
+    CHECK(geoda_graph_components(grafo, &ids, &cuantas) == GEODA_OK && cuantas == 2);
+    geoda_column_free(ids);
+
+    /* Dirigido: el arbol de expansion minimo no aplica y no escribe nada. */
+    struct GeodaColumn *aristas = (struct GeodaColumn *)1;
+    double total = -1.0;
+    cuantas = -1;
+    CHECK(geoda_graph_mst(grafo, &aristas, &total, &cuantas) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(aristas == NULL && total == -1.0 && cuantas == -1);
+    CHECK(geoda_graph_topological_order(grafo, &orden) == GEODA_OK && geoda_column_len(orden) == 5);
+    geoda_column_free(orden);
+    geoda_graph_free(grafo);
+
+    /* Sin pesos no hay Dijkstra. */
+    grafo = NULL;
+    CHECK(geoda_graph_new(5, from, to, NULL, true, &grafo) == GEODA_OK);
+    CHECK(geoda_graph_dijkstra(grafo, 0, &distancia, &padre) == GEODA_ERR_TYPE_MISMATCH);
+    geoda_graph_free(grafo);
+
+    /* Nodo fuera de rango, pesos de otro largo y punteros NULL. */
+    grafo = (struct GeodaGraph *)1;
+    CHECK(geoda_graph_new(3, from, to, NULL, true, &grafo) == GEODA_ERR_OUT_OF_BOUNDS);
+    CHECK(grafo == NULL);
+    CHECK(geoda_graph_new(5, from, to, from, true, &grafo) == GEODA_ERR_TYPE_MISMATCH);
+    CHECK(geoda_graph_new(5, NULL, to, NULL, true, &grafo) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_graph_node_count(NULL) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_graph_bfs(NULL, 0, &orden, &distancia, &padre) == GEODA_ERR_INVALID_ARGUMENT);
+    geoda_graph_free(NULL); /* acepta NULL */
+
+    geoda_column_free(from);
+    geoda_column_free(to);
+    geoda_column_free(weights);
+}
+
 int main(void) {
     /* Version de la ABI: major 0, minor 1. */
     CHECK(geoda_abi_version() == ((0u << 16) | 1u));
@@ -234,6 +328,8 @@ int main(void) {
     CHECK(geoda_column_len(NULL) == GEODA_ERR_INVALID_ARGUMENT);
     CHECK(geoda_column_to_arrow(NULL, &schema, &array) == GEODA_ERR_INVALID_ARGUMENT);
     CHECK(geoda_column_slice(NULL, 0, 0, &corte) == GEODA_ERR_INVALID_ARGUMENT);
+
+    prueba_grafo();
 
     if (fallos == 0) {
         puts("smoke: ok");

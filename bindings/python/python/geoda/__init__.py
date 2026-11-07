@@ -2,6 +2,7 @@
 
 from . import _geoda
 from ._geoda import (
+    Graph,
     column_len,
     corr,
     count,
@@ -72,6 +73,7 @@ def group_by(keys):
 
 
 __all__ = [
+    "Graph",
     "GroupBy",
     "column_len",
     "corr",

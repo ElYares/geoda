@@ -148,6 +148,41 @@ def _load():
             ctypes.c_int32,
         ),
         "geoda_column_free": ([p_handle], None),
+        "geoda_graph_new": (
+            [
+                ctypes.c_size_t,
+                p_handle,
+                p_handle,
+                p_handle,
+                ctypes.c_bool,
+                ctypes.POINTER(p_handle),
+            ],
+            ctypes.c_int32,
+        ),
+        "geoda_graph_free": ([p_handle], None),
+        "geoda_graph_node_count": ([p_handle], ctypes.c_int64),
+        "geoda_graph_bfs": (
+            [p_handle, ctypes.c_size_t] + [ctypes.POINTER(p_handle)] * 3,
+            ctypes.c_int32,
+        ),
+        "geoda_graph_components": (
+            [p_handle, ctypes.POINTER(p_handle), ctypes.POINTER(ctypes.c_int64)],
+            ctypes.c_int32,
+        ),
+        "geoda_graph_topological_order": ([p_handle, ctypes.POINTER(p_handle)], ctypes.c_int32),
+        "geoda_graph_dijkstra": (
+            [p_handle, ctypes.c_size_t] + [ctypes.POINTER(p_handle)] * 2,
+            ctypes.c_int32,
+        ),
+        "geoda_graph_mst": (
+            [
+                p_handle,
+                ctypes.POINTER(p_handle),
+                ctypes.POINTER(ctypes.c_double),
+                ctypes.POINTER(ctypes.c_int64),
+            ],
+            ctypes.c_int32,
+        ),
     }
     # `sum`, `min` y `max` conservan el tipo de la columna: una variante por familia.
     for stat in ("sum", "min", "max"):
@@ -275,6 +310,83 @@ class Column:
         schema, array = ArrowSchema(), ArrowArray()
         code = LIB.geoda_column_to_arrow(self.handle, ctypes.byref(schema), ctypes.byref(array))
         return schema, array, code
+
+
+class Graph:
+    """Handle de un grafo de la capi. Se libera con `close()` o al salir del `with`."""
+
+    def __init__(self, handle):
+        self.handle = ctypes.c_void_p(handle)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def close(self):
+        if self.handle.value:
+            LIB.geoda_graph_free(self.handle)
+            self.handle = ctypes.c_void_p(None)
+
+    @property
+    def node_count(self):
+        return LIB.geoda_graph_node_count(self.handle)
+
+    def bfs(self, source):
+        """`([order, distance, parent], 0)` o `([], codigo)`."""
+        outs = [ctypes.c_void_p(None) for _ in range(3)]
+        code = LIB.geoda_graph_bfs(self.handle, source, *(ctypes.byref(o) for o in outs))
+        return Column._own(outs, code)
+
+    def components(self):
+        """`([ids], 0, count)` o `([], codigo, None)`."""
+        outs, count = [ctypes.c_void_p(None)], ctypes.c_int64(0)
+        code = LIB.geoda_graph_components(self.handle, ctypes.byref(outs[0]), ctypes.byref(count))
+        columns, code = Column._own(outs, code)
+        return columns, code, (count.value if code == OK else None)
+
+    def topological_order(self):
+        """`([order], 0)` o `([], codigo)`."""
+        outs = [ctypes.c_void_p(None)]
+        code = LIB.geoda_graph_topological_order(self.handle, ctypes.byref(outs[0]))
+        return Column._own(outs, code)
+
+    def dijkstra(self, source):
+        """`([distance, parent], 0)` o `([], codigo)`."""
+        outs = [ctypes.c_void_p(None) for _ in range(2)]
+        code = LIB.geoda_graph_dijkstra(self.handle, source, *(ctypes.byref(o) for o in outs))
+        return Column._own(outs, code)
+
+    def mst(self):
+        """`([edges], 0, total, components)` o `([], codigo, None, None)`."""
+        outs = [ctypes.c_void_p(None)]
+        total, components = ctypes.c_double(0.0), ctypes.c_int64(0)
+        code = LIB.geoda_graph_mst(
+            self.handle, ctypes.byref(outs[0]), ctypes.byref(total), ctypes.byref(components)
+        )
+        columns, code = Column._own(outs, code)
+        if code != OK:
+            return columns, code, None, None
+        return columns, code, total.value, components.value
+
+
+def graph_new(n, from_column, to_column, weights_column, directed):
+    """`(Graph, 0)` si sale bien; `(None, codigo)` si la capi lo rechaza (`out` queda en NULL)."""
+    out = ctypes.c_void_p(None)
+    code = LIB.geoda_graph_new(
+        n,
+        from_column.handle,
+        to_column.handle,
+        weights_column.handle if weights_column is not None else None,
+        directed,
+        ctypes.byref(out),
+    )
+    if code != OK:
+        if out.value:
+            raise AssertionError("geoda_graph_new fallo pero dejo el out sin poner en NULL")
+        return None, code
+    return Graph(out.value), code
 
 
 def from_arrow(schema, array):

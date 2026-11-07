@@ -1,0 +1,22 @@
+{
+  "spec_version": 1,
+  "id": "graph/error_dijkstra_without_weights",
+  "description": "un grafo sin pesos no ofrece Dijkstra: TYPE_MISMATCH",
+  "graph": {
+    "n": 2,
+    "directed": true,
+    "edges": [
+      [
+        0,
+        1
+      ]
+    ]
+  },
+  "op": "graph_dijkstra",
+  "args": {
+    "source": 0
+  },
+  "expect": {
+    "error": "TYPE_MISMATCH"
+  }
+}

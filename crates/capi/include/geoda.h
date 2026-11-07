@@ -97,6 +97,9 @@ struct ArrowArray {
 // Columna de geoda. Opaca para C: solo se maneja por puntero.
 typedef struct GeodaColumn GeodaColumn;
 
+// Grafo de geoda con o sin pesos. Opaco para C: solo se maneja por puntero.
+typedef struct GeodaGraph GeodaGraph;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -390,6 +393,118 @@ int32_t geoda_column_group_by(const struct GeodaColumn *keys,
                               size_t workers,
                               struct GeodaColumn **out_keys,
                               struct GeodaColumn **out_values);
+
+// Construye un grafo de `n` nodos desde dos columnas `Int64` de aristas (`from[i] -> to[i]`) y,
+// opcionalmente, una columna `Float64` de pesos (`weights` NULL = grafo sin pesos). El grafo se
+// libera con `geoda_graph_free`.
+//
+// Si falla devuelve un codigo negativo y `*out` queda en NULL: `GEODA_ERR_TYPE_MISMATCH` si una
+// columna no tiene el tipo pedido, `GEODA_ERR_LENGTH_MISMATCH` si miden distinto,
+// `GEODA_ERR_INVALID_ARGUMENT` si hay un nulo, y `GEODA_ERR_OUT_OF_BOUNDS` si un nodo es negativo
+// o `>= n`, o el grafo no cabe en `u32`.
+//
+// # Safety
+// `from`, `to` y `weights` (si no es NULL) deben ser handles validos y `out` debe ser escribible.
+// `from`, `to` y `out` no pueden ser NULL (si lo son, se devuelve un error).
+int32_t geoda_graph_new(size_t n,
+                        const struct GeodaColumn *from,
+                        const struct GeodaColumn *to,
+                        const struct GeodaColumn *weights,
+                        bool directed,
+                        struct GeodaGraph **out);
+
+// Libera un grafo. Acepta NULL (no hace nada). Despues de llamarla el handle ya no es valido;
+// liberarlo dos veces es comportamiento indefinido.
+//
+// # Safety
+// `graph` debe ser NULL o un handle devuelto por `geoda_graph_new` y no liberado aun.
+void geoda_graph_free(struct GeodaGraph *graph);
+
+// Cantidad de nodos del grafo, o un codigo de error negativo si `graph` es NULL.
+//
+// # Safety
+// `graph` debe ser NULL o un handle valido.
+int64_t geoda_graph_node_count(const struct GeodaGraph *graph);
+
+// Recorrido en anchura desde `source`. Devuelve **tres columnas `Int64` nuevas**:
+//
+// - `*out_order`: los nodos alcanzables en el orden en que se visitaron.
+// - `*out_distance`: una fila por nodo, con la distancia en aristas desde `source`; nulo si el
+//   nodo no es alcanzable.
+// - `*out_parent`: una fila por nodo, con el nodo desde el que se descubrio; nulo en `source`
+//   y en los no alcanzables.
+//
+// Cada columna debe liberarse con `geoda_column_free`. Si falla, devuelve un codigo negativo y
+// los tres `out` quedan en NULL: `GEODA_ERR_OUT_OF_BOUNDS` si `source >= n`.
+//
+// # Safety
+// `graph` debe ser un handle valido y los tres `out` deben ser escribibles. Ninguno puede ser
+// NULL (si lo es, se devuelve un error).
+int32_t geoda_graph_bfs(const struct GeodaGraph *graph,
+                        size_t source,
+                        struct GeodaColumn **out_order,
+                        struct GeodaColumn **out_distance,
+                        struct GeodaColumn **out_parent);
+
+// Componentes conexas (debilmente conexas en un grafo dirigido). Devuelve una columna `Int64`
+// nueva por `*out_ids` con el id de componente de cada nodo (desde 0, en el orden del primer
+// nodo de cada una) y escribe en `*out_count` cuantas hay.
+//
+// `*out_ids` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo, `*out_ids`
+// queda en NULL y `*out_count` no se escribe.
+//
+// # Safety
+// `graph` debe ser un handle valido; `out_ids` y `out_count` deben ser escribibles y no NULL.
+int32_t geoda_graph_components(const struct GeodaGraph *graph,
+                               struct GeodaColumn **out_ids,
+                               int64_t *out_count);
+
+// Orden topologico de un grafo dirigido sin ciclos: una columna `Int64` nueva por `*out_order`
+// con los nodos en orden (entre varios posibles gana el de menor indice).
+//
+// Se libera con `geoda_column_free`. Si falla, `*out_order` queda en NULL:
+// `GEODA_ERR_INVALID_ARGUMENT` si hay un ciclo (un bucle cuenta) o el grafo no es dirigido.
+//
+// # Safety
+// `graph` debe ser un handle valido y `out_order` escribible y no NULL.
+int32_t geoda_graph_topological_order(const struct GeodaGraph *graph,
+                                      struct GeodaColumn **out_order);
+
+// Caminos minimos desde `source` en un grafo con pesos no negativos. Devuelve **dos columnas
+// nuevas**:
+//
+// - `*out_distance`: `Float64`, una fila por nodo; `+inf` si no es alcanzable.
+// - `*out_parent`: `Int64`, una fila por nodo; el nodo anterior en un camino minimo, nulo en
+//   `source` y en los no alcanzables.
+//
+// Cada columna debe liberarse con `geoda_column_free`. Si falla, devuelve un codigo negativo y
+// los dos `out` quedan en NULL: `GEODA_ERR_TYPE_MISMATCH` si el grafo no tiene pesos,
+// `GEODA_ERR_INVALID_ARGUMENT` si algun peso es negativo o `NaN`, y `GEODA_ERR_OUT_OF_BOUNDS` si
+// `source >= n`.
+//
+// # Safety
+// `graph` debe ser un handle valido y los dos `out` deben ser escribibles y no NULL.
+int32_t geoda_graph_dijkstra(const struct GeodaGraph *graph,
+                             size_t source,
+                             struct GeodaColumn **out_distance,
+                             struct GeodaColumn **out_parent);
+
+// Bosque de expansion minimo (Kruskal) de un grafo **no dirigido** con pesos. Devuelve una
+// columna `Int64` nueva por `*out_edges` con las posiciones, en la lista con la que se creo el
+// grafo, de las aristas elegidas (de menor a mayor peso; con el mismo peso gana la primera de
+// la lista); escribe en `*out_total` la suma de sus pesos y en `*out_components` cuantas
+// componentes tiene el grafo.
+//
+// `*out_edges` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo,
+// `*out_edges` queda en NULL y los otros dos `out` no se escriben: `GEODA_ERR_TYPE_MISMATCH` si
+// el grafo no tiene pesos, `GEODA_ERR_INVALID_ARGUMENT` si es dirigido o algun peso es `NaN`.
+//
+// # Safety
+// `graph` debe ser un handle valido y los tres `out` deben ser escribibles y no NULL.
+int32_t geoda_graph_mst(const struct GeodaGraph *graph,
+                        struct GeodaColumn **out_edges,
+                        double *out_total,
+                        int64_t *out_components);
 
 // Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 // ya no es valido; liberarlo dos veces es comportamiento indefinido.

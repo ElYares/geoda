@@ -1,0 +1,41 @@
+{
+  "spec_version": 1,
+  "id": "graph/topological_order_dag",
+  "description": "entre varios candidatos gana el de menor indice",
+  "graph": {
+    "n": 4,
+    "directed": true,
+    "edges": [
+      [
+        3,
+        1
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        3,
+        2
+      ],
+      [
+        2,
+        0
+      ]
+    ]
+  },
+  "op": "graph_topological_order",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int64",
+        "values": [
+          3,
+          1,
+          2,
+          0
+        ]
+      }
+    ]
+  }
+}

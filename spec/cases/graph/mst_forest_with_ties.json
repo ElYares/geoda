@@ -1,0 +1,48 @@
+{
+  "spec_version": 1,
+  "id": "graph/mst_forest_with_ties",
+  "description": "un grafo no conexo da un bosque; con pesos iguales gana la posicion en la lista",
+  "graph": {
+    "n": 6,
+    "directed": false,
+    "edges": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        3,
+        4
+      ]
+    ],
+    "weights": [
+      1.0,
+      1.0,
+      1.0,
+      2.0
+    ]
+  },
+  "op": "graph_mst",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int64",
+        "values": [
+          0,
+          1,
+          3
+        ]
+      }
+    ],
+    "total": 4.0,
+    "components": 3
+  }
+}

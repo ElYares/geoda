@@ -13,7 +13,7 @@ mod error;
 use std::ffi::c_char;
 use std::ptr;
 
-use geoda_algo::{Method, percentile_column};
+use geoda_algo::{Method, Network, percentile_column};
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
 };
@@ -25,12 +25,12 @@ use geoda_stats::{
     variance_column_with_workers,
 };
 
+use error::{CError, guard, invalid_argument};
 pub use error::{
     GEODA_ERR_ALLOC, GEODA_ERR_FFI, GEODA_ERR_INTERNAL, GEODA_ERR_INVALID_ARGUMENT,
     GEODA_ERR_LENGTH_MISMATCH, GEODA_ERR_OUT_OF_BOUNDS, GEODA_ERR_PANIC, GEODA_ERR_TYPE_MISMATCH,
     GEODA_ERR_UNSUPPORTED, GEODA_OK,
 };
-use error::{guard, invalid_argument};
 
 /// Version mayor de la ABI.
 const ABI_MAJOR: u32 = 0;
@@ -67,6 +67,77 @@ fn int64_column(values: &[i64]) -> Result<Column, Error> {
         builder.append(v);
     }
     builder.finish()
+}
+
+/// Grafo de geoda con o sin pesos. Opaco para C: solo se maneja por puntero.
+pub struct GeodaGraph(Network);
+
+/// Columna `Int64` con nulos: `None` sale como nulo.
+fn int64_nullable_column(values: impl Iterator<Item = Option<i64>>) -> Result<Column, Error> {
+    let mut builder = PrimitiveBuilder::<i64>::new();
+    for value in values {
+        match value {
+            Some(v) => builder.append(v),
+            None => builder.append_null(),
+        }
+    }
+    builder.finish()
+}
+
+/// Columna `Float64` con los valores dados.
+fn float64_column(values: &[f64]) -> Result<Column, Error> {
+    let mut builder = PrimitiveBuilder::<f64>::new();
+    for &v in values {
+        builder.append(v);
+    }
+    builder.finish()
+}
+
+/// Un indice o contador de nodo como `i64`.
+fn node_to_i64(n: u32) -> i64 {
+    i64::from(n)
+}
+
+/// Lee una columna `Int64` de nodos: sin nulos y sin negativos.
+fn node_indices(column: &Column, name: &str) -> Result<Vec<usize>, Error> {
+    let values = column.values::<i64>()?;
+    values
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            if column.is_null(i)? {
+                return Err(Error::InvalidArgument(format!("{name}[{i}] es nulo")));
+            }
+            usize::try_from(v)
+                .map_err(|_| Error::OutOfBounds(format!("{name}[{i}] = {v} es negativo")))
+        })
+        .collect()
+}
+
+/// Deja los `out` de una llamada en NULL; falla si alguno ya es NULL de origen.
+///
+/// # Safety
+/// Cada puntero debe ser escribible si no es NULL.
+unsafe fn null_outs(outs: &[*mut *mut GeodaColumn]) -> Result<(), CError> {
+    if outs.iter().any(|p| p.is_null()) {
+        return Err(invalid_argument("un out es NULL"));
+    }
+    for &out in outs {
+        // SAFETY: no es NULL (arriba) y el llamador lo garantiza escribible.
+        unsafe { *out = ptr::null_mut() };
+    }
+    Ok(())
+}
+
+/// Referencia al grafo de un handle, o error si es NULL.
+///
+/// # Safety
+/// `graph` debe ser NULL o un handle valido.
+unsafe fn graph_ref<'a>(graph: *const GeodaGraph) -> Result<&'a Network, CError> {
+    // SAFETY: `as_ref` revisa NULL; la validez del handle es contrato.
+    unsafe { graph.as_ref() }
+        .map(|g| &g.0)
+        .ok_or_else(|| invalid_argument("graph es NULL"))
 }
 
 /// Un contador de Rust como `i64`.
@@ -728,6 +799,286 @@ pub unsafe extern "C" fn geoda_column_group_by(
     })
 }
 
+/// Construye un grafo de `n` nodos desde dos columnas `Int64` de aristas (`from[i] -> to[i]`) y,
+/// opcionalmente, una columna `Float64` de pesos (`weights` NULL = grafo sin pesos). El grafo se
+/// libera con `geoda_graph_free`.
+///
+/// Si falla devuelve un codigo negativo y `*out` queda en NULL: `GEODA_ERR_TYPE_MISMATCH` si una
+/// columna no tiene el tipo pedido, `GEODA_ERR_LENGTH_MISMATCH` si miden distinto,
+/// `GEODA_ERR_INVALID_ARGUMENT` si hay un nulo, y `GEODA_ERR_OUT_OF_BOUNDS` si un nodo es negativo
+/// o `>= n`, o el grafo no cabe en `u32`.
+///
+/// # Safety
+/// `from`, `to` y `weights` (si no es NULL) deben ser handles validos y `out` debe ser escribible.
+/// `from`, `to` y `out` no pueden ser NULL (si lo son, se devuelve un error).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_graph_new(
+    n: usize,
+    from: *const GeodaColumn,
+    to: *const GeodaColumn,
+    weights: *const GeodaColumn,
+    directed: bool,
+    out: *mut *mut GeodaGraph,
+) -> i32 {
+    guard(|| {
+        if out.is_null() {
+            return Err(invalid_argument("out es NULL"));
+        }
+        // SAFETY: no es NULL (arriba) y el llamador lo garantiza escribible.
+        unsafe { *out = ptr::null_mut() };
+        // SAFETY: `as_ref` revisa NULL; la validez de los handles es contrato.
+        let (Some(GeodaColumn(from)), Some(GeodaColumn(to))) =
+            (unsafe { from.as_ref() }, unsafe { to.as_ref() })
+        else {
+            return Err(invalid_argument("from o to es NULL"));
+        };
+        if from.len() != to.len() {
+            return Err(Error::LengthMismatch(format!(
+                "from tiene {} filas y to {}",
+                from.len(),
+                to.len()
+            ))
+            .into());
+        }
+        let (from, to) = (node_indices(from, "from")?, node_indices(to, "to")?);
+        let edges: Vec<(usize, usize)> = from.into_iter().zip(to).collect();
+        // SAFETY: `as_ref` revisa NULL; la validez del handle es contrato.
+        let weights = match unsafe { weights.as_ref() } {
+            None => None,
+            Some(GeodaColumn(column)) => {
+                let values = column.values::<f64>()?;
+                for i in 0..column.len() {
+                    if column.is_null(i)? {
+                        return Err(invalid_argument(&format!("weights[{i}] es nulo")));
+                    }
+                }
+                Some(values)
+            }
+        };
+        let network = Network::new(n, &edges, weights, directed)?;
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { *out = Box::into_raw(Box::new(GeodaGraph(network))) };
+        Ok(())
+    })
+}
+
+/// Libera un grafo. Acepta NULL (no hace nada). Despues de llamarla el handle ya no es valido;
+/// liberarlo dos veces es comportamiento indefinido.
+///
+/// # Safety
+/// `graph` debe ser NULL o un handle devuelto por `geoda_graph_new` y no liberado aun.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_graph_free(graph: *mut GeodaGraph) {
+    let _ = guard(|| {
+        if !graph.is_null() {
+            // SAFETY: handle creado con `Box::into_raw` y aun no liberado (contrato).
+            drop(unsafe { Box::from_raw(graph) });
+        }
+        Ok(())
+    });
+}
+
+/// Cantidad de nodos del grafo, o un codigo de error negativo si `graph` es NULL.
+///
+/// # Safety
+/// `graph` debe ser NULL o un handle valido.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_graph_node_count(graph: *const GeodaGraph) -> i64 {
+    let mut count = 0;
+    let code = guard(|| {
+        // SAFETY: contrato de `graph_ref`.
+        count = to_i64(unsafe { graph_ref(graph) }?.graph().node_count())?;
+        Ok(())
+    });
+    if code == GEODA_OK {
+        count
+    } else {
+        i64::from(code)
+    }
+}
+
+/// Recorrido en anchura desde `source`. Devuelve **tres columnas `Int64` nuevas**:
+///
+/// - `*out_order`: los nodos alcanzables en el orden en que se visitaron.
+/// - `*out_distance`: una fila por nodo, con la distancia en aristas desde `source`; nulo si el
+///   nodo no es alcanzable.
+/// - `*out_parent`: una fila por nodo, con el nodo desde el que se descubrio; nulo en `source`
+///   y en los no alcanzables.
+///
+/// Cada columna debe liberarse con `geoda_column_free`. Si falla, devuelve un codigo negativo y
+/// los tres `out` quedan en NULL: `GEODA_ERR_OUT_OF_BOUNDS` si `source >= n`.
+///
+/// # Safety
+/// `graph` debe ser un handle valido y los tres `out` deben ser escribibles. Ninguno puede ser
+/// NULL (si lo es, se devuelve un error).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_graph_bfs(
+    graph: *const GeodaGraph,
+    source: usize,
+    out_order: *mut *mut GeodaColumn,
+    out_distance: *mut *mut GeodaColumn,
+    out_parent: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: los `out` son escribibles si no son NULL (contrato).
+        unsafe { null_outs(&[out_order, out_distance, out_parent]) }?;
+        // SAFETY: contrato de `graph_ref`.
+        let result = unsafe { graph_ref(graph) }?.bfs(source)?;
+        let order = int64_nullable_column(result.order.iter().map(|&v| Some(node_to_i64(v))))?;
+        let distance = int64_nullable_column(result.distance.iter().map(|d| d.map(node_to_i64)))?;
+        let parent = int64_nullable_column(result.parent.iter().map(|p| p.map(node_to_i64)))?;
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_order = into_handle(order);
+            *out_distance = into_handle(distance);
+            *out_parent = into_handle(parent);
+        }
+        Ok(())
+    })
+}
+
+/// Componentes conexas (debilmente conexas en un grafo dirigido). Devuelve una columna `Int64`
+/// nueva por `*out_ids` con el id de componente de cada nodo (desde 0, en el orden del primer
+/// nodo de cada una) y escribe en `*out_count` cuantas hay.
+///
+/// `*out_ids` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo, `*out_ids`
+/// queda en NULL y `*out_count` no se escribe.
+///
+/// # Safety
+/// `graph` debe ser un handle valido; `out_ids` y `out_count` deben ser escribibles y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_graph_components(
+    graph: *const GeodaGraph,
+    out_ids: *mut *mut GeodaColumn,
+    out_count: *mut i64,
+) -> i32 {
+    guard(|| {
+        if out_count.is_null() {
+            return Err(invalid_argument("out_count es NULL"));
+        }
+        // SAFETY: `out_ids` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out_ids]) }?;
+        // SAFETY: contrato de `graph_ref`.
+        let result = unsafe { graph_ref(graph) }?.components()?;
+        let ids = int64_nullable_column(result.id.iter().map(|&v| Some(node_to_i64(v))))?;
+        let count = to_i64(result.count)?;
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_ids = into_handle(ids);
+            *out_count = count;
+        }
+        Ok(())
+    })
+}
+
+/// Orden topologico de un grafo dirigido sin ciclos: una columna `Int64` nueva por `*out_order`
+/// con los nodos en orden (entre varios posibles gana el de menor indice).
+///
+/// Se libera con `geoda_column_free`. Si falla, `*out_order` queda en NULL:
+/// `GEODA_ERR_INVALID_ARGUMENT` si hay un ciclo (un bucle cuenta) o el grafo no es dirigido.
+///
+/// # Safety
+/// `graph` debe ser un handle valido y `out_order` escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_graph_topological_order(
+    graph: *const GeodaGraph,
+    out_order: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out_order` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out_order]) }?;
+        // SAFETY: contrato de `graph_ref`.
+        let order = unsafe { graph_ref(graph) }?.topological_order()?;
+        let order = int64_nullable_column(order.iter().map(|&v| Some(node_to_i64(v))))?;
+        // SAFETY: `out_order` es escribible (arriba).
+        unsafe { *out_order = into_handle(order) };
+        Ok(())
+    })
+}
+
+/// Caminos minimos desde `source` en un grafo con pesos no negativos. Devuelve **dos columnas
+/// nuevas**:
+///
+/// - `*out_distance`: `Float64`, una fila por nodo; `+inf` si no es alcanzable.
+/// - `*out_parent`: `Int64`, una fila por nodo; el nodo anterior en un camino minimo, nulo en
+///   `source` y en los no alcanzables.
+///
+/// Cada columna debe liberarse con `geoda_column_free`. Si falla, devuelve un codigo negativo y
+/// los dos `out` quedan en NULL: `GEODA_ERR_TYPE_MISMATCH` si el grafo no tiene pesos,
+/// `GEODA_ERR_INVALID_ARGUMENT` si algun peso es negativo o `NaN`, y `GEODA_ERR_OUT_OF_BOUNDS` si
+/// `source >= n`.
+///
+/// # Safety
+/// `graph` debe ser un handle valido y los dos `out` deben ser escribibles y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_graph_dijkstra(
+    graph: *const GeodaGraph,
+    source: usize,
+    out_distance: *mut *mut GeodaColumn,
+    out_parent: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: los `out` son escribibles si no son NULL (contrato).
+        unsafe { null_outs(&[out_distance, out_parent]) }?;
+        // SAFETY: contrato de `graph_ref`.
+        let result = unsafe { graph_ref(graph) }?.dijkstra(source)?;
+        let distance = float64_column(&result.distance)?;
+        let parent = int64_nullable_column(result.parent.iter().map(|p| p.map(node_to_i64)))?;
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_distance = into_handle(distance);
+            *out_parent = into_handle(parent);
+        }
+        Ok(())
+    })
+}
+
+/// Bosque de expansion minimo (Kruskal) de un grafo **no dirigido** con pesos. Devuelve una
+/// columna `Int64` nueva por `*out_edges` con las posiciones, en la lista con la que se creo el
+/// grafo, de las aristas elegidas (de menor a mayor peso; con el mismo peso gana la primera de
+/// la lista); escribe en `*out_total` la suma de sus pesos y en `*out_components` cuantas
+/// componentes tiene el grafo.
+///
+/// `*out_edges` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo,
+/// `*out_edges` queda en NULL y los otros dos `out` no se escriben: `GEODA_ERR_TYPE_MISMATCH` si
+/// el grafo no tiene pesos, `GEODA_ERR_INVALID_ARGUMENT` si es dirigido o algun peso es `NaN`.
+///
+/// # Safety
+/// `graph` debe ser un handle valido y los tres `out` deben ser escribibles y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_graph_mst(
+    graph: *const GeodaGraph,
+    out_edges: *mut *mut GeodaColumn,
+    out_total: *mut f64,
+    out_components: *mut i64,
+) -> i32 {
+    guard(|| {
+        if out_total.is_null() || out_components.is_null() {
+            return Err(invalid_argument("un out es NULL"));
+        }
+        // SAFETY: `out_edges` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out_edges]) }?;
+        // SAFETY: contrato de `graph_ref`.
+        let forest = unsafe { graph_ref(graph) }?.mst()?;
+        let edges = int64_nullable_column(
+            forest
+                .edges
+                .iter()
+                .map(|&e| to_i64(e).map(Some))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter(),
+        )?;
+        let components = to_i64(forest.components)?;
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_edges = into_handle(edges);
+            *out_total = forest.total_weight;
+            *out_components = components;
+        }
+        Ok(())
+    })
+}
+
 /// Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 /// ya no es valido; liberarlo dos veces es comportamiento indefinido.
 ///
@@ -1251,5 +1602,67 @@ mod tests {
         assert_eq!(revienta(), GEODA_ERR_PANIC);
         let m = mensaje();
         assert!(m.contains("panic") && m.contains("explota 42"), "{m}");
+    }
+
+    #[test]
+    fn graph_lifecycle_queries_and_errors() {
+        let handle = |values: &[i64]| into_handle(int64_column(values).unwrap());
+        let (from, to) = (handle(&[0, 1, 2]), handle(&[1, 2, 0]));
+        let weights = into_handle(float64_column(&[3.0, 1.0, 2.0]).unwrap());
+        let mut graph: *mut GeodaGraph = ptr::null_mut();
+        // SAFETY: handles validos y `out` escribibles; todo se libera abajo.
+        unsafe {
+            assert_eq!(
+                geoda_graph_new(3, from, to, weights, false, &raw mut graph),
+                GEODA_OK
+            );
+            assert_eq!(geoda_graph_node_count(graph), 3);
+
+            let mut edges: *mut GeodaColumn = ptr::null_mut();
+            let (mut total, mut components) = (0.0, 0);
+            assert_eq!(
+                geoda_graph_mst(graph, &raw mut edges, &raw mut total, &raw mut components),
+                GEODA_OK
+            );
+            assert_eq!((total, components), (3.0, 1));
+            assert_eq!(geoda_column_len(edges), 2);
+            geoda_column_free(edges);
+
+            // Un origen fuera de rango deja los `out` en NULL.
+            let (mut distance, mut parent) = (
+                ptr::NonNull::dangling().as_ptr(),
+                ptr::NonNull::dangling().as_ptr(),
+            );
+            assert_eq!(
+                geoda_graph_dijkstra(graph, 3, &raw mut distance, &raw mut parent),
+                GEODA_ERR_OUT_OF_BOUNDS
+            );
+            assert!(distance.is_null() && parent.is_null());
+            geoda_graph_free(graph);
+
+            // Sin pesos no hay Dijkstra; un nodo fuera de rango no crea el grafo.
+            assert_eq!(
+                geoda_graph_new(3, from, to, ptr::null(), true, &raw mut graph),
+                GEODA_OK
+            );
+            assert_eq!(
+                geoda_graph_dijkstra(graph, 0, &raw mut distance, &raw mut parent),
+                GEODA_ERR_TYPE_MISMATCH
+            );
+            geoda_graph_free(graph);
+            assert_eq!(
+                geoda_graph_new(2, from, to, ptr::null(), true, &raw mut graph),
+                GEODA_ERR_OUT_OF_BOUNDS
+            );
+            assert!(graph.is_null());
+            assert_eq!(
+                geoda_graph_node_count(ptr::null()),
+                i64::from(GEODA_ERR_INVALID_ARGUMENT)
+            );
+            geoda_graph_free(ptr::null_mut());
+            for column in [from, to, weights] {
+                geoda_column_free(column);
+            }
+        }
     }
 }

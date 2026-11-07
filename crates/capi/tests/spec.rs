@@ -16,12 +16,14 @@ use geoda::{
     GEODA_AGG_COUNT, GEODA_AGG_MAX, GEODA_AGG_MEAN, GEODA_AGG_MIN, GEODA_AGG_STD, GEODA_AGG_SUM,
     GEODA_AGG_VAR, GEODA_ERR_ALLOC, GEODA_ERR_FFI, GEODA_ERR_INTERNAL, GEODA_ERR_INVALID_ARGUMENT,
     GEODA_ERR_LENGTH_MISMATCH, GEODA_ERR_OUT_OF_BOUNDS, GEODA_ERR_PANIC, GEODA_ERR_TYPE_MISMATCH,
-    GEODA_ERR_UNSUPPORTED, GEODA_OK, GeodaColumn, geoda_column_corr, geoda_column_count,
-    geoda_column_free, geoda_column_from_arrow, geoda_column_group_by, geoda_column_histogram,
-    geoda_column_len, geoda_column_max_f64, geoda_column_max_i64, geoda_column_mean,
-    geoda_column_median, geoda_column_min_f64, geoda_column_min_i64, geoda_column_null_count,
-    geoda_column_percentile, geoda_column_slice, geoda_column_std, geoda_column_sum_f64,
-    geoda_column_sum_i64, geoda_column_to_arrow, geoda_column_var, geoda_last_error_message,
+    GEODA_ERR_UNSUPPORTED, GEODA_OK, GeodaColumn, GeodaGraph, geoda_column_corr,
+    geoda_column_count, geoda_column_free, geoda_column_from_arrow, geoda_column_group_by,
+    geoda_column_histogram, geoda_column_len, geoda_column_max_f64, geoda_column_max_i64,
+    geoda_column_mean, geoda_column_median, geoda_column_min_f64, geoda_column_min_i64,
+    geoda_column_null_count, geoda_column_percentile, geoda_column_slice, geoda_column_std,
+    geoda_column_sum_f64, geoda_column_sum_i64, geoda_column_to_arrow, geoda_column_var,
+    geoda_graph_bfs, geoda_graph_components, geoda_graph_dijkstra, geoda_graph_free,
+    geoda_graph_mst, geoda_graph_new, geoda_graph_topological_order, geoda_last_error_message,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -41,6 +43,16 @@ impl Drop for Handle {
     fn drop(&mut self) {
         // SAFETY: el handle viene de la capi y se libera una sola vez, aqui.
         unsafe { geoda_column_free(self.0) };
+    }
+}
+
+/// Grafo de la capi que se libera solo al salir de alcance.
+struct GraphHandle(*mut GeodaGraph);
+
+impl Drop for GraphHandle {
+    fn drop(&mut self) {
+        // SAFETY: el handle viene de la capi y se libera una sola vez, aqui.
+        unsafe { geoda_graph_free(self.0) };
     }
 }
 
@@ -316,6 +328,25 @@ fn check_counts(expect: &Value, handle: &Handle) -> CaseResult {
     Ok(())
 }
 
+/// Compara `expect.columns` con las columnas que devolvio la operacion, en orden.
+fn check_columns(expect: &Value, handles: &[Handle]) -> CaseResult {
+    let expected = expect
+        .get("columns")
+        .and_then(Value::as_array)
+        .ok_or("expect.columns falta (debe ser una lista)")?;
+    if expected.len() != handles.len() {
+        return Err(format!(
+            "expect.columns tiene {} entradas y la operacion devolvio {} columnas",
+            expected.len(),
+            handles.len()
+        ));
+    }
+    for (i, (want, handle)) in expected.iter().zip(handles).enumerate() {
+        check_exported(want, handle).map_err(|e| format!("columns[{i}]: {e}"))?;
+    }
+    Ok(())
+}
+
 fn check_expect(expect: &Value, outcome: &Outcome) -> CaseResult {
     match outcome {
         Outcome::Column(handle) => {
@@ -327,23 +358,24 @@ fn check_expect(expect: &Value, outcome: &Outcome) -> CaseResult {
             check_counts(expect, handle)?;
             check_exported(expect, handle)
         }
-        Outcome::Columns(handles) => {
-            let expected = expect
-                .get("columns")
-                .and_then(Value::as_array)
-                .ok_or("expect.columns falta (debe ser una lista)")?;
-            if expected.len() != handles.len() {
-                return Err(format!(
-                    "expect.columns tiene {} entradas y la operacion devolvio {} columnas",
-                    expected.len(),
-                    handles.len()
-                ));
-            }
-            for (i, (want, handle)) in expected.iter().zip(handles).enumerate() {
-                check_exported(want, handle).map_err(|e| format!("columns[{i}]: {e}"))?;
+        Outcome::Graph(handles, extras) => {
+            check_columns(expect, handles)?;
+            for (key, actual) in extras {
+                let want = expect.get(*key).ok_or(format!("expect.{key} falta"))?;
+                match actual {
+                    Extra::Int(actual) if want.as_i64() == Some(*actual) => {}
+                    Extra::Float(actual) if same_f64(parse_f64(want)?, *actual) => {}
+                    Extra::Int(actual) => {
+                        return Err(format!("{key}: esperado {want}, salio {actual}"));
+                    }
+                    Extra::Float(actual) => {
+                        return Err(format!("{key}: esperado {want}, salio {actual:?}"));
+                    }
+                }
             }
             Ok(())
         }
+        Outcome::Columns(handles) => check_columns(expect, handles),
         Outcome::Int(actual) => {
             let expected = expect
                 .get("value")
@@ -389,8 +421,16 @@ enum Outcome {
     Column(Handle),
     /// Varias columnas nuevas (`histogram`, `group_by`), en el orden de `spec/README.md`.
     Columns(Vec<Handle>),
+    /// Columnas mas escalares con nombre (`count`, `total`, `components`) de una consulta de grafo.
+    Graph(Vec<Handle>, Vec<(&'static str, Extra)>),
     Int(i64),
     Value(f64),
+}
+
+/// Escalar con nombre que una consulta de grafo devuelve junto a sus columnas.
+enum Extra {
+    Int(i64),
+    Float(f64),
 }
 
 /// Resultado de una operacion, o el codigo con el que fallo.
@@ -582,6 +622,118 @@ fn run_scalar(op: &str, case: &Value, handle: &Handle) -> Result<OpResult, Strin
     })
 }
 
+/// Construye el grafo de `case.graph` por la capi: las aristas viajan como dos columnas
+/// `Int64` y los pesos, si hay, como una `Float64`. `Ok(Err(codigo))` si la capi lo rechaza.
+fn build_graph(spec: &Value) -> Result<Result<GraphHandle, i32>, String> {
+    let n = int_of::<usize>(&spec["n"])?;
+    let edges = spec["edges"]
+        .as_array()
+        .ok_or("graph.edges debe ser una lista")?;
+    let mut ends: [Vec<Value>; 2] = [Vec::new(), Vec::new()];
+    for edge in edges {
+        let pair = edge
+            .as_array()
+            .filter(|p| p.len() == 2)
+            .ok_or("cada arista es [u, v]")?;
+        ends[0].push(pair[0].clone());
+        ends[1].push(pair[1].clone());
+    }
+    let column = |dtype: &str, values: &[Value]| {
+        import_through_capi(&serde_json::json!({ "dtype": dtype, "values": values }))
+    };
+    let from = match column("int64", &ends[0])? {
+        Ok(handle) => handle,
+        Err(code) => return Ok(Err(code)),
+    };
+    let to = match column("int64", &ends[1])? {
+        Ok(handle) => handle,
+        Err(code) => return Ok(Err(code)),
+    };
+    let weights = match spec.get("weights") {
+        None | Some(Value::Null) => None,
+        Some(w) => match column(
+            "float64",
+            w.as_array().ok_or("graph.weights debe ser una lista")?,
+        )? {
+            Ok(handle) => Some(handle),
+            Err(code) => return Ok(Err(code)),
+        },
+    };
+    let directed = spec["directed"].as_bool().ok_or("graph.directed falta")?;
+    let mut out: *mut GeodaGraph = ptr::null_mut();
+    // SAFETY: handles validos (o NULL en `weights`) y `out` escribible.
+    let code = unsafe {
+        geoda_graph_new(
+            n,
+            from.0,
+            to.0,
+            weights.as_ref().map_or(ptr::null(), |w| w.0),
+            directed,
+            &raw mut out,
+        )
+    };
+    if code != GEODA_OK {
+        if !out.is_null() {
+            return Err("geoda_graph_new fallo pero dejo el out sin poner en NULL".into());
+        }
+        return Ok(Err(code));
+    }
+    Ok(Ok(GraphHandle(out)))
+}
+
+/// Ejecuta una consulta de grafo (`graph_*`), a la que `expect` compara columnas y escalares.
+fn run_graph_op(op: &str, case: &Value, graph: &GraphHandle) -> Result<OpResult, String> {
+    let source = || usize_arg(case, "source");
+    let mut outs = [ptr::null_mut::<GeodaColumn>(); 3];
+    let (mut count, mut components, mut total) = (0_i64, 0_i64, 0.0_f64);
+    let [first, second, third] = &mut outs;
+    // SAFETY: handle valido y los `out` son escribibles.
+    let (code, used, extras) = unsafe {
+        match op {
+            "graph_bfs" => (
+                geoda_graph_bfs(graph.0, source()?, first, second, third),
+                3,
+                Vec::new(),
+            ),
+            "graph_components" => {
+                let code = geoda_graph_components(graph.0, first, &raw mut count);
+                (code, 1, vec![("count", Extra::Int(count))])
+            }
+            "graph_topological_order" => {
+                (geoda_graph_topological_order(graph.0, first), 1, Vec::new())
+            }
+            "graph_dijkstra" => (
+                geoda_graph_dijkstra(graph.0, source()?, first, second),
+                2,
+                Vec::new(),
+            ),
+            "graph_mst" => {
+                let code = geoda_graph_mst(graph.0, first, &raw mut total, &raw mut components);
+                (
+                    code,
+                    1,
+                    vec![
+                        ("total", Extra::Float(total)),
+                        ("components", Extra::Int(components)),
+                    ],
+                )
+            }
+            otro => return Err(format!("op de grafo desconocida: {otro:?}")),
+        }
+    };
+    if code != GEODA_OK {
+        if outs.iter().any(|p| !p.is_null()) {
+            return Err("la capi fallo pero dejo un out sin poner en NULL".into());
+        }
+        return Ok(Err(code));
+    }
+    if outs[..used].iter().any(|p| p.is_null()) {
+        return Err("la capi devolvio GEODA_OK con un out NULL".into());
+    }
+    let handles = outs[..used].iter().map(|&p| Handle(p)).collect();
+    Ok(Ok(Outcome::Graph(handles, extras)))
+}
+
 /// Ejecuta un caso. Cualquier cosa inesperada es `Err`, incluida una `op` que el
 /// runner no conoce: no se salta en silencio.
 fn run_case(case: &Value) -> CaseResult {
@@ -594,10 +746,16 @@ fn run_case(case: &Value) -> CaseResult {
     let op = case["op"].as_str().ok_or("op falta")?;
     let expect = case.get("expect").ok_or("expect falta")?;
 
-    let imported = import_through_capi(&case["input"])?;
-    let result = match imported {
-        Ok(handle) => run_op(op, case, handle)?,
-        Err(code) => Err(code),
+    let result = if let Some(spec) = case.get("graph") {
+        match build_graph(spec)? {
+            Ok(graph) => run_graph_op(op, case, &graph)?,
+            Err(code) => Err(code),
+        }
+    } else {
+        match import_through_capi(&case["input"])? {
+            Ok(handle) => run_op(op, case, handle)?,
+            Err(code) => Err(code),
+        }
     };
     match result {
         Ok(outcome) if expect.get("error").is_some() => {

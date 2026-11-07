@@ -36,7 +36,8 @@ coincidir: uno en Rust (`crates/capi/tests/spec.rs`, corre con
 | `spec_version` | si | version del formato |
 | `id` | si | `grupo/nombre`, igual a la ruta del archivo sin `.json` |
 | `description` | si | que comportamiento fija el caso y por que |
-| `input` | si | la columna de entrada: `dtype` y `values` |
+| `input` | si (salvo `graph_*`) | la columna de entrada: `dtype` y `values` |
+| `graph` | `graph_*` | el grafo de entrada en lugar de `input` (ver «Grafos») |
 | `op` | si | la operacion (ver abajo) |
 | `input2` | `corr`, `group_by` | la segunda columna, con el mismo formato que `input` (en `group_by` son los valores; `input` son las claves) |
 | `args` | segun `op` | parametros de la operacion; `workers` (opcional, por defecto 1) es el numero de hilos de `sum`, `min`, `max`, `mean`, `var`, `std`, `corr`, `histogram` y `group_by`: el resultado no depende de el y `0` es `INVALID_ARGUMENT` |
@@ -77,6 +78,11 @@ no conozca **hace fallar el caso**, no lo salta.
 | `corr` | — | correlacion de Pearson entre `input` e `input2` (`geoda_column_corr`) | `expect.value` |
 | `histogram` | `n_bins`, `range` (opcional) | histograma de ancho fijo (`geoda_column_histogram`) | `expect.columns` |
 | `group_by` | `agg`, `ddof` (solo `var`/`std`) | agregado de `input2` por los grupos de `input` (`geoda_column_group_by`) | `expect.columns` |
+| `graph_bfs` | `source` | recorrido en anchura (`geoda_graph_bfs`) | `expect.columns` |
+| `graph_components` | — | componentes conexas (`geoda_graph_components`) | `expect.columns` y `expect.count` |
+| `graph_topological_order` | — | orden topologico (`geoda_graph_topological_order`) | `expect.columns` |
+| `graph_dijkstra` | `source` | caminos minimos (`geoda_graph_dijkstra`) | `expect.columns` |
+| `graph_mst` | — | bosque de expansion minimo (`geoda_graph_mst`) | `expect.columns`, `expect.total` y `expect.components` |
 
 `median` y `percentile` aceptan `int32`, `int64` y `float64`, ignoran los nulos y
 devuelven un `float64`. Un `NaN` en la columna da `NaN` y no es un error.
@@ -127,6 +133,36 @@ las entrega por varios `out` en una sola llamada; cada una se exporta por Arrow 
      casos. Reglas de nulos, `NaN` y errores, las del escalar correspondiente en cada grupo; el error
      de un grupo aborta la llamada. Largos distintos son `LENGTH_MISMATCH`; `input2` `bool` o `utf8`,
      `UNSUPPORTED`.
+
+#### Grafos (fase 4)
+
+Un caso de grafo lleva `graph` en lugar de `input`:
+
+```json
+"graph": { "n": 5, "directed": true, "edges": [[0, 1], [0, 2]], "weights": [4.0, 1.0] }
+```
+
+`weights` es opcional (sin el, el grafo no tiene pesos); un peso usa los mismos valores
+especiales que `float64`. El runner entrega las aristas a `geoda_graph_new` como dos columnas
+`int64` (`from`, `to`) y los pesos como una `float64`, y libera el grafo con `geoda_graph_free`.
+Un error al construir (`OUT_OF_BOUNDS` para un nodo negativo o `>= n`, `INVALID_ARGUMENT` para un
+nulo, `LENGTH_MISMATCH` para pesos de otro largo) se comprueba con `expect.error`, igual que uno de
+la consulta. Las columnas de resultado, en este orden:
+
+- `graph_bfs`: `order` (los alcanzables en orden de visita), `distance` y `parent` (una fila por
+  nodo, nulo si no es alcanzable; `parent` es nulo tambien en el origen), todas `int64`.
+- `graph_components`: `ids` (`int64`, el id de cada nodo, desde 0 por el primer nodo de cada una);
+  `expect.count` es cuantas hay.
+- `graph_topological_order`: `order` (`int64`); un ciclo, un bucle o un grafo no dirigido es
+  `INVALID_ARGUMENT`.
+- `graph_dijkstra`: `distance` (`float64`, `Infinity` si no es alcanzable) y `parent` (`int64`).
+  Sin pesos es `TYPE_MISMATCH`; un peso negativo o `NaN`, `INVALID_ARGUMENT`.
+- `graph_mst`: `edges` (`int64`, posiciones en la lista de aristas de las elegidas, de menor a
+  mayor peso; con el mismo peso gana la primera); `expect.total` es la suma de sus pesos
+  (`float64`, en ese orden) y `expect.components` cuantas componentes tiene el grafo. Sin pesos es
+  `TYPE_MISMATCH`; dirigido, `INVALID_ARGUMENT`.
+
+`expect.count`, `total` y `components` se comparan exactos (el flotante bit a bit).
 
 ### `expect`
 

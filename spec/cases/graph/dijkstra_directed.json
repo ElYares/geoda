@@ -1,0 +1,61 @@
+{
+  "spec_version": 1,
+  "id": "graph/dijkstra_directed",
+  "description": "la distancia minima, el padre y +inf para el nodo inalcanzable",
+  "graph": {
+    "n": 5,
+    "directed": true,
+    "edges": [
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        2,
+        1
+      ],
+      [
+        1,
+        3
+      ]
+    ],
+    "weights": [
+      4.0,
+      1.0,
+      2.0,
+      1.0
+    ]
+  },
+  "op": "graph_dijkstra",
+  "args": {
+    "source": 0
+  },
+  "expect": {
+    "columns": [
+      {
+        "dtype": "float64",
+        "values": [
+          0.0,
+          3.0,
+          1.0,
+          4.0,
+          "Infinity"
+        ]
+      },
+      {
+        "dtype": "int64",
+        "values": [
+          null,
+          2,
+          0,
+          1,
+          null
+        ]
+      }
+    ]
+  }
+}

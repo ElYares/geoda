@@ -1,0 +1,19 @@
+{
+  "spec_version": 1,
+  "id": "graph/error_graph_node_out_of_range",
+  "description": "una arista que nombra un nodo >= n es OUT_OF_BOUNDS al construir",
+  "graph": {
+    "n": 2,
+    "directed": true,
+    "edges": [
+      [
+        0,
+        2
+      ]
+    ]
+  },
+  "op": "graph_components",
+  "expect": {
+    "error": "OUT_OF_BOUNDS"
+  }
+}

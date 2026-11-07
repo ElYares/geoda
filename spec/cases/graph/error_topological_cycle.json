@@ -1,0 +1,27 @@
+{
+  "spec_version": 1,
+  "id": "graph/error_topological_cycle",
+  "description": "un ciclo es INVALID_ARGUMENT y no se devuelve un orden parcial",
+  "graph": {
+    "n": 3,
+    "directed": true,
+    "edges": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        0
+      ]
+    ]
+  },
+  "op": "graph_topological_order",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

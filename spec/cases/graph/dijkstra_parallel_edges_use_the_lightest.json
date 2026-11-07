@@ -1,0 +1,50 @@
+{
+  "spec_version": 1,
+  "id": "graph/dijkstra_parallel_edges_use_the_lightest",
+  "description": "de varias aristas paralelas entra la de menor peso",
+  "graph": {
+    "n": 2,
+    "directed": true,
+    "edges": [
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        1
+      ]
+    ],
+    "weights": [
+      5.0,
+      2.0,
+      7.0
+    ]
+  },
+  "op": "graph_dijkstra",
+  "args": {
+    "source": 0
+  },
+  "expect": {
+    "columns": [
+      {
+        "dtype": "float64",
+        "values": [
+          0.0,
+          2.0
+        ]
+      },
+      {
+        "dtype": "int64",
+        "values": [
+          null,
+          0
+        ]
+      }
+    ]
+  }
+}

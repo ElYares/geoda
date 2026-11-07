@@ -1,0 +1,22 @@
+{
+  "spec_version": 1,
+  "id": "graph/error_mst_directed",
+  "description": "el arbol de expansion minimo pide un grafo no dirigido: INVALID_ARGUMENT",
+  "graph": {
+    "n": 2,
+    "directed": true,
+    "edges": [
+      [
+        0,
+        1
+      ]
+    ],
+    "weights": [
+      1.0
+    ]
+  },
+  "op": "graph_mst",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

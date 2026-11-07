@@ -1,0 +1,26 @@
+{
+  "spec_version": 1,
+  "id": "graph/error_graph_weights_length",
+  "description": "pesos y aristas de distinto largo: LENGTH_MISMATCH",
+  "graph": {
+    "n": 2,
+    "directed": true,
+    "edges": [
+      [
+        0,
+        1
+      ]
+    ],
+    "weights": [
+      1.0,
+      2.0
+    ]
+  },
+  "op": "graph_dijkstra",
+  "args": {
+    "source": 0
+  },
+  "expect": {
+    "error": "LENGTH_MISMATCH"
+  }
+}

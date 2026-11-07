@@ -1,0 +1,22 @@
+{
+  "spec_version": 1,
+  "id": "graph/error_bfs_source_out_of_bounds",
+  "description": "un origen >= n es OUT_OF_BOUNDS",
+  "graph": {
+    "n": 2,
+    "directed": true,
+    "edges": [
+      [
+        0,
+        1
+      ]
+    ]
+  },
+  "op": "graph_bfs",
+  "args": {
+    "source": 2
+  },
+  "expect": {
+    "error": "OUT_OF_BOUNDS"
+  }
+}

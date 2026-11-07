@@ -1,0 +1,19 @@
+{
+  "spec_version": 1,
+  "id": "graph/error_mst_without_weights",
+  "description": "sin pesos no hay arbol minimo: TYPE_MISMATCH",
+  "graph": {
+    "n": 2,
+    "directed": false,
+    "edges": [
+      [
+        0,
+        1
+      ]
+    ]
+  },
+  "op": "graph_mst",
+  "expect": {
+    "error": "TYPE_MISMATCH"
+  }
+}

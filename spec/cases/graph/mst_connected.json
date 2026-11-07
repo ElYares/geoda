@@ -1,0 +1,53 @@
+{
+  "spec_version": 1,
+  "id": "graph/mst_connected",
+  "description": "el arbol deja fuera las aristas que cierran un ciclo; devuelve posiciones de la lista",
+  "graph": {
+    "n": 4,
+    "directed": false,
+    "edges": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        3,
+        0
+      ],
+      [
+        0,
+        2
+      ]
+    ],
+    "weights": [
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      10.0
+    ]
+  },
+  "op": "graph_mst",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int64",
+        "values": [
+          0,
+          1,
+          2
+        ]
+      }
+    ],
+    "total": 6.0,
+    "components": 1
+  }
+}

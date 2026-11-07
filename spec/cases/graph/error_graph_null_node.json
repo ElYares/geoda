@@ -1,0 +1,19 @@
+{
+  "spec_version": 1,
+  "id": "graph/error_graph_null_node",
+  "description": "un nulo en las aristas es INVALID_ARGUMENT",
+  "graph": {
+    "n": 2,
+    "directed": true,
+    "edges": [
+      [
+        0,
+        null
+      ]
+    ]
+  },
+  "op": "graph_components",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

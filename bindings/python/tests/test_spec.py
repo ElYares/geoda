@@ -14,6 +14,7 @@ SPEC_VERSION = 1
 CASES_DIR = capi.ROOT / "spec" / "cases"
 SCALAR_OPS = ("count", "sum", "min", "max", "mean", "var", "std", "corr")
 COLUMNS_OPS = ("histogram", "group_by")
+GRAPH_OPS = ("graph_bfs", "graph_components", "graph_topological_order", "graph_dijkstra", "graph_mst")
 OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile") + SCALAR_OPS + COLUMNS_OPS
 
 
@@ -29,8 +30,10 @@ def run_case(case):
     op, expect = case.get("op"), case.get("expect")
     if op is None or expect is None:
         raise CaseFailure("faltan op o expect")
-    if op not in OPS:
+    if op not in OPS + GRAPH_OPS:
         raise CaseFailure(f"op desconocida: {op!r}")
+    if "graph" in case:
+        return run_graph_case(case, op, expect)
 
     column, code = _import(case["input"])
     result = None
@@ -74,6 +77,65 @@ def run_case(case):
         for handle in (result, column, *outputs):
             if handle is not None:
                 handle.close()
+
+
+def run_graph_case(case, op, expect):
+    """Consulta de grafo (`graph_*`): las aristas viajan por la capi como columnas `Int64` y los
+    pesos como una `Float64`; `expect` compara columnas y los escalares `count`, `total` y
+    `components`."""
+    if op not in GRAPH_OPS:
+        raise CaseFailure(f"op de grafo desconocida: {op!r}")
+    spec = case["graph"]
+    edges = spec["edges"]
+    owned = []  # columnas y grafo de entrada; se cierran todos
+    outputs = []
+    try:
+        columns = [
+            _import({"dtype": "int64", "values": [edge[i] for edge in edges]}) for i in (0, 1)
+        ]
+        if spec.get("weights") is not None:
+            columns.append(_import({"dtype": "float64", "values": spec["weights"]}))
+        else:
+            columns.append((None, capi.OK))
+        owned += [c for c, _ in columns if c is not None]
+        code = next((c for _, c in columns if c != capi.OK), capi.OK)
+        extras = {}
+        if code == capi.OK:
+            graph, code = capi.graph_new(
+                spec["n"], columns[0][0], columns[1][0], columns[2][0], spec["directed"]
+            )
+            if graph is not None:
+                owned.append(graph)
+                args = case.get("args", {})
+                if op in ("graph_bfs", "graph_dijkstra") and not isinstance(args.get("source"), int):
+                    raise CaseFailure("args.source falta o no es un entero >= 0")
+                if op == "graph_bfs":
+                    outputs, code = graph.bfs(args["source"])
+                elif op == "graph_dijkstra":
+                    outputs, code = graph.dijkstra(args["source"])
+                elif op == "graph_topological_order":
+                    outputs, code = graph.topological_order()
+                elif op == "graph_components":
+                    outputs, code, extras["count"] = graph.components()
+                else:
+                    outputs, code, extras["total"], extras["components"] = graph.mst()
+        if code != capi.OK:
+            _check_error(expect, code)
+            return
+        if "error" in expect:
+            raise CaseFailure(f"esperaba el error {expect['error']!r}, pero la operacion tuvo exito")
+        _check_columns(expect, outputs)
+        for key, actual in extras.items():
+            if key not in expect:
+                raise CaseFailure(f"expect.{key} falta")
+            if isinstance(actual, float):
+                if not capi.same_float(capi.parse_float(expect[key]), actual):
+                    raise CaseFailure(f"{key}: esperado {expect[key]!r}, salio {actual!r}")
+            elif expect[key] != actual:
+                raise CaseFailure(f"{key}: esperado {expect[key]!r}, salio {actual!r}")
+    finally:
+        for handle in (*outputs, *owned):
+            handle.close()
 
 
 def _workers(case):

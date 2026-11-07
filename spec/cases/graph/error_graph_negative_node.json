@@ -1,0 +1,19 @@
+{
+  "spec_version": 1,
+  "id": "graph/error_graph_negative_node",
+  "description": "un nodo negativo es OUT_OF_BOUNDS",
+  "graph": {
+    "n": 2,
+    "directed": true,
+    "edges": [
+      [
+        0,
+        -1
+      ]
+    ]
+  },
+  "op": "graph_components",
+  "expect": {
+    "error": "OUT_OF_BOUNDS"
+  }
+}

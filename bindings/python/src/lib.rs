@@ -1,6 +1,6 @@
 //! Binding de Python para geoda: `version`, `column_len`, `median`, `percentile` y los
 //! estadisticos escalares (`count`, `sum`, `min`, `max`, `mean`, `var`, `std`, `corr`), `histogram`
-//! y `group_aggregate` (la base de `geoda.group_by`).
+//! y `group_aggregate` (la base de `geoda.group_by`), y la clase `Graph` (fase 4).
 //!
 //! Todas las funciones numericas aceptan una lista o cualquier objeto con el protocolo Arrow
 //! `PyCapsule` (`__arrow_c_array__`): `pyarrow`, `polars`, `pandas` con Arrow... (S10). Los
@@ -17,7 +17,7 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList};
 
-use geoda_algo::{Method, Value, median_column, percentile_column};
+use geoda_algo::{Method, Network, Value, median_column, percentile_column};
 use geoda_core::interop::arrow_c::{ArrowArray, ArrowSchema, import_column};
 use geoda_core::{Column, DataType, Error, PrimitiveBuilder};
 use geoda_stats::{
@@ -368,6 +368,127 @@ fn group_aggregate<'py>(
     Ok((key_list, value_list))
 }
 
+/// Error de una consulta de grafo: `TypeMismatch` (falta el peso que la consulta necesita) y
+/// `Unsupported` son `TypeError`; el resto, `ValueError`.
+fn graph_error(e: &Error) -> PyErr {
+    match e {
+        Error::TypeMismatch(_) | Error::Unsupported(_) => PyTypeError::new_err(e.to_string()),
+        _ => PyValueError::new_err(e.to_string()),
+    }
+}
+
+/// Un nodo de Python (`int >= 0`) como indice.
+fn node_of(node: i64, what: &str) -> PyResult<usize> {
+    usize::try_from(node)
+        .map_err(|_| PyValueError::new_err(format!("{what} no puede ser negativo: {node}")))
+}
+
+/// Grafo con o sin pesos: `Graph(n, edges, directed=False, weights=None)`.
+///
+/// `edges` es una lista de parejas `(u, v)` con nodos de 0 a `n - 1`; `weights`, si se da, tiene
+/// un `float` por arista. Se acepta un multigrafo (aristas repetidas y bucles).
+///
+/// # Errors
+/// `ValueError` si un nodo es negativo o `>= n`, o `weights` y `edges` miden distinto.
+#[pyclass(frozen, module = "geoda")]
+struct Graph {
+    network: Network,
+}
+
+#[pymethods]
+impl Graph {
+    #[new]
+    #[pyo3(signature = (n, edges, directed=false, weights=None))]
+    // PyO3 extrae los argumentos por valor; no hay forma de recibirlos por referencia.
+    #[allow(clippy::needless_pass_by_value)]
+    fn new(
+        n: usize,
+        edges: Vec<[i64; 2]>,
+        directed: bool,
+        weights: Option<Vec<f64>>,
+    ) -> PyResult<Self> {
+        let edges = edges
+            .into_iter()
+            .map(|[u, v]| Ok((node_of(u, "un nodo")?, node_of(v, "un nodo")?)))
+            .collect::<PyResult<Vec<_>>>()?;
+        let network =
+            Network::new(n, &edges, weights.as_deref(), directed).map_err(|e| graph_error(&e))?;
+        Ok(Self { network })
+    }
+
+    /// Cantidad de nodos.
+    #[getter]
+    fn n(&self) -> usize {
+        self.network.graph().node_count()
+    }
+
+    /// `True` si las aristas tienen sentido.
+    #[getter]
+    fn directed(&self) -> bool {
+        self.network.graph().is_directed()
+    }
+
+    /// `True` si cada arista lleva un peso.
+    #[getter]
+    fn weighted(&self) -> bool {
+        self.network.is_weighted()
+    }
+
+    /// Recorrido en anchura: `{"order", "distance", "parent"}`. `distance` y `parent` tienen un
+    /// valor por nodo, con `None` si no es alcanzable (y en el origen, para `parent`).
+    fn bfs<'py>(&self, py: Python<'py>, source: i64) -> PyResult<Bound<'py, PyDict>> {
+        let result = self
+            .network
+            .bfs(node_of(source, "source")?)
+            .map_err(|e| graph_error(&e))?;
+        let out = PyDict::new(py);
+        out.set_item("order", result.order)?;
+        out.set_item("distance", result.distance)?;
+        out.set_item("parent", result.parent)?;
+        Ok(out)
+    }
+
+    /// Componentes conexas (debiles en un dirigido): `{"ids", "count"}`.
+    fn components<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let result = self.network.components().map_err(|e| graph_error(&e))?;
+        let out = PyDict::new(py);
+        out.set_item("ids", result.id)?;
+        out.set_item("count", result.count)?;
+        Ok(out)
+    }
+
+    /// Orden topologico (lista de nodos). `ValueError` si hay un ciclo o el grafo no es dirigido.
+    fn topological_order(&self) -> PyResult<Vec<u32>> {
+        self.network
+            .topological_order()
+            .map_err(|e| graph_error(&e))
+    }
+
+    /// Caminos minimos desde `source`: `{"distance", "parent"}`, con `inf` y `None` para los no
+    /// alcanzables. `TypeError` sin pesos; `ValueError` con un peso negativo o `NaN`.
+    fn dijkstra<'py>(&self, py: Python<'py>, source: i64) -> PyResult<Bound<'py, PyDict>> {
+        let result = self
+            .network
+            .dijkstra(node_of(source, "source")?)
+            .map_err(|e| graph_error(&e))?;
+        let out = PyDict::new(py);
+        out.set_item("distance", result.distance)?;
+        out.set_item("parent", result.parent)?;
+        Ok(out)
+    }
+
+    /// Bosque de expansion minimo (Kruskal): `{"edges", "total", "components"}`, con `edges` las
+    /// posiciones en la lista de aristas. `TypeError` sin pesos; `ValueError` si es dirigido.
+    fn mst<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let forest = self.network.mst().map_err(|e| graph_error(&e))?;
+        let out = PyDict::new(py);
+        out.set_item("edges", forest.edges)?;
+        out.set_item("total", forest.total_weight)?;
+        out.set_item("components", forest.components)?;
+        Ok(out)
+    }
+}
+
 /// Modulo nativo `geoda._geoda`.
 #[pymodule]
 fn _geoda(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -385,5 +506,6 @@ fn _geoda(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(corr, m)?)?;
     m.add_function(wrap_pyfunction!(histogram, m)?)?;
     m.add_function(wrap_pyfunction!(group_aggregate, m)?)?;
+    m.add_class::<Graph>()?;
     Ok(())
 }

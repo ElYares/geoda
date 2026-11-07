@@ -1,0 +1,25 @@
+{
+  "spec_version": 1,
+  "id": "graph/error_dijkstra_negative_weight",
+  "description": "un peso negativo es INVALID_ARGUMENT",
+  "graph": {
+    "n": 2,
+    "directed": true,
+    "edges": [
+      [
+        0,
+        1
+      ]
+    ],
+    "weights": [
+      -1.0
+    ]
+  },
+  "op": "graph_dijkstra",
+  "args": {
+    "source": 0
+  },
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}
