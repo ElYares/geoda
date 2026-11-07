@@ -14,6 +14,7 @@ pub mod search;
 pub mod select;
 pub mod shortest;
 pub mod sort;
+pub mod spanning;
 pub mod traverse;
 
 pub use components::{Components, UnionFind, components, topological_order};
@@ -25,4 +26,5 @@ pub use search::{lower_bound, lower_bound_column, upper_bound, upper_bound_colum
 pub use select::{Method, Scalar, median_of_medians, quickselect, select_column};
 pub use shortest::{ShortestPaths, dijkstra, reconstruct_path};
 pub use sort::{merge_sort, sort_column};
+pub use spanning::{SpanningForest, kruskal};
 pub use traverse::{Bfs, Dfs, bfs, dfs};
