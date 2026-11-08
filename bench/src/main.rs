@@ -13,14 +13,14 @@
 //! cargo run --release -p geoda-bench -- file 250000000    # archivo de 2 GB leido por trozos
 //! cargo run --release -p geoda-bench -- graph              # BFS y DFS de 1M nodos y 10M aristas
 //! cargo run --release -p geoda-bench -- graph 1000000 10000000   # incluye Dijkstra
-//! cargo run --release -p geoda-bench -- text              # distancia de edicion de 20 000 caracteres
+//! cargo run --release -p geoda-bench -- text              # edicion de 20 000 caracteres y LIS de 1M
 //! ```
 
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use geoda_algo::{
-    Graph, WeightedGraph, bfs, dfs, dijkstra, edit_distance, median_of_medians, merge_sort,
+    Graph, WeightedGraph, bfs, dfs, dijkstra, edit_distance, lis, median_of_medians, merge_sort,
     quickselect,
 };
 use geoda_core::file::{ColumnFileReader, ColumnFileWriter};
@@ -332,6 +332,18 @@ fn bench_text(len: usize) {
         Some(mib) => println!("pico de memoria residente: {mib:.1} MiB"),
         None => println!("pico de memoria residente: no disponible (solo Linux)"),
     }
+
+    let n = 1_000_000;
+    let data: Vec<i64> = (0..n)
+        .map(|_| i64::try_from(rng.next() >> 2).expect("cabe"))
+        .collect();
+    let started = Instant::now();
+    let result = lis(black_box(&data)).expect("sin NaN");
+    println!(
+        "LIS de {n} enteros aleatorios: longitud {} en {} ms",
+        result.length,
+        ms(started.elapsed())
+    );
 }
 
 fn ms(d: Duration) -> String {
