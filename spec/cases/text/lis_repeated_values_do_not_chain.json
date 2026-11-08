@@ -1,0 +1,8 @@
+{
+  "spec_version": 1,
+  "id": "text/lis_repeated_values_do_not_chain",
+  "description": "los repetidos no se encadenan: es estricta",
+  "input": { "dtype": "float64", "values": [2.0, 2.0, 2.0] },
+  "op": "lis",
+  "expect": { "columns": [ { "dtype": "int64", "values": [2] } ] }
+}

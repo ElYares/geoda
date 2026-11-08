@@ -1,6 +1,6 @@
 [package]
 name = "geoda-algo"
-description = "Algoritmos base de geoda: ordenacion, seleccion, heaps, hash y busqueda"
+description = "Algoritmos base de geoda: ordenacion, seleccion, heaps, hash, busqueda, grafos y texto"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

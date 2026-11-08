@@ -506,6 +506,64 @@ int32_t geoda_graph_mst(const struct GeodaGraph *graph,
                         double *out_total,
                         int64_t *out_components);
 
+// Distancia de edicion (Levenshtein, por caracteres Unicode) fila a fila entre dos columnas
+// `Utf8`. Las dos miden lo mismo, o una mide 1 y se compara con todas las filas de la otra.
+// Una fila nula en cualquiera da nulo. Devuelve una columna `Int64` nueva por `*out`.
+//
+// `*out` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y `*out`
+// queda en NULL: `GEODA_ERR_TYPE_MISMATCH` si alguna no es `Utf8` y
+// `GEODA_ERR_LENGTH_MISMATCH` si miden distinto y ninguna mide 1.
+//
+// # Safety
+// `a` y `b` deben ser handles validos y `out` escribible y no NULL.
+int32_t geoda_column_edit_distance(const struct GeodaColumn *a,
+                                   const struct GeodaColumn *b,
+                                   struct GeodaColumn **out);
+
+// Subsecuencia estrictamente creciente mas larga (LIS) de una columna `Int32`, `Int64` o
+// `Float64`. Devuelve una columna `Int64` nueva por `*out` con las posiciones de sus elementos,
+// de menor a mayor; su largo es el de la LIS.
+//
+// `*out` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y `*out` queda
+// en NULL: `GEODA_ERR_INVALID_ARGUMENT` si hay algun nulo o `NaN`, y `GEODA_ERR_UNSUPPORTED`
+// para `Bool` y `Utf8`.
+//
+// # Safety
+// `column` debe ser un handle valido y `out` escribible y no NULL.
+int32_t geoda_column_lis(const struct GeodaColumn *column, struct GeodaColumn **out);
+
+// Codifica con Huffman una columna `Int32` de bytes (valores `0..=255`, sin nulos). Devuelve
+// **dos columnas nuevas**:
+//
+// - `*out_bits`: `Bool`, los bits codificados (una fila por bit, el primero es el de la raiz).
+// - `*out_frequencies`: `Int64`, 256 filas con cuantas veces aparece cada byte. Es todo lo que
+//   `geoda_huffman_decode` necesita: la tabla se reconstruye de ahi, con desempate fijo.
+//
+// Cada columna debe liberarse con `geoda_column_free`. Si falla, devuelve un codigo negativo y
+// los dos `out` quedan en NULL: `GEODA_ERR_TYPE_MISMATCH` si no es `Int32` y
+// `GEODA_ERR_INVALID_ARGUMENT` si hay nulos o un valor fuera de `0..=255`.
+//
+// # Safety
+// `data` debe ser un handle valido y los dos `out` deben ser escribibles y no NULL.
+int32_t geoda_huffman_encode(const struct GeodaColumn *data,
+                             struct GeodaColumn **out_bits,
+                             struct GeodaColumn **out_frequencies);
+
+// Decodifica con Huffman una columna `Bool` de bits, con la tabla que sale de `frequencies`
+// (`Int64`, 256 filas no negativas, las de `geoda_huffman_encode`). Devuelve una columna
+// `Int32` nueva por `*out_data` con los bytes.
+//
+// `*out_data` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y
+// `*out_data` queda en NULL: `GEODA_ERR_TYPE_MISMATCH` si los tipos no son `Int64` y `Bool`, y
+// `GEODA_ERR_INVALID_ARGUMENT` si hay nulos, las frecuencias no son 256 valores no negativos o
+// los bits no se pueden decodificar con esa tabla (terminan a media palabra, o no hay simbolos).
+//
+// # Safety
+// `frequencies` y `bits` deben ser handles validos y `out_data` escribible y no NULL.
+int32_t geoda_huffman_decode(const struct GeodaColumn *frequencies,
+                             const struct GeodaColumn *bits,
+                             struct GeodaColumn **out_data);
+
 // Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 // ya no es valido; liberarlo dos veces es comportamiento indefinido.
 //

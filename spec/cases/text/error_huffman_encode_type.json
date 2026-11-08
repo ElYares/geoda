@@ -1,0 +1,13 @@
+{
+  "spec_version": 1,
+  "id": "text/error_huffman_encode_type",
+  "description": "los bytes viajan como int32: int64 es TYPE_MISMATCH",
+  "input": {
+    "dtype": "int64",
+    "values": [1, 2]
+  },
+  "op": "huffman_encode",
+  "expect": {
+    "error": "TYPE_MISMATCH"
+  }
+}

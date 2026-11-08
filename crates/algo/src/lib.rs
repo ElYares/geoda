@@ -1,4 +1,4 @@
-//! Algoritmos base de geoda (fases 1 y 4). Todo en Rust seguro: ningun `unsafe`.
+//! Algoritmos base de geoda (fases 1, 4 y 5). Todo en Rust seguro: ningun `unsafe`.
 //!
 //! Los algoritmos se escriben a mano (el proyecto es «desde cero»); la biblioteca
 //! estandar solo se usa como oraculo en los tests.
@@ -19,6 +19,7 @@ pub mod select;
 pub mod shortest;
 pub mod sort;
 pub mod spanning;
+pub mod text;
 pub mod traverse;
 
 pub use components::{Components, UnionFind, components, topological_order};
@@ -35,4 +36,8 @@ pub use select::{Method, Scalar, median_of_medians, quickselect, select_column};
 pub use shortest::{ShortestPaths, dijkstra, reconstruct_path};
 pub use sort::{merge_sort, sort_column};
 pub use spanning::{SpanningForest, kruskal};
+pub use text::{
+    edit_distance_columns, huffman_decode_column, huffman_encode_column, huffman_from_counts,
+    lis_column,
+};
 pub use traverse::{Bfs, Dfs, bfs, dfs};

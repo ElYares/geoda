@@ -15,7 +15,8 @@ CASES_DIR = capi.ROOT / "spec" / "cases"
 SCALAR_OPS = ("count", "sum", "min", "max", "mean", "var", "std", "corr")
 COLUMNS_OPS = ("histogram", "group_by")
 GRAPH_OPS = ("graph_bfs", "graph_components", "graph_topological_order", "graph_dijkstra", "graph_mst")
-OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile") + SCALAR_OPS + COLUMNS_OPS
+TEXT_OPS = ("edit_distance", "lis", "huffman_encode", "huffman_decode")
+OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile") + SCALAR_OPS + COLUMNS_OPS + TEXT_OPS
 
 
 class CaseFailure(Exception):
@@ -57,6 +58,8 @@ def run_case(case):
                 value, integer, code = _run_scalar(op, case, column)
             elif op in COLUMNS_OPS:
                 outputs, code = _run_columns(op, case, column)
+            elif op in TEXT_OPS:
+                outputs, code = _run_text(op, case, column)
             else:
                 result = column
                 column = None  # `result` es el dueno; no se libera dos veces
@@ -64,7 +67,7 @@ def run_case(case):
             _check_error(expect, code)
         elif "error" in expect:
             raise CaseFailure(f"esperaba el error {expect['error']!r}, pero la operacion tuvo exito")
-        elif op in COLUMNS_OPS:
+        elif op in COLUMNS_OPS + TEXT_OPS:
             _check_columns(expect, outputs)
         elif op in SCALAR_OPS and integer:
             _check_int(expect, value)
@@ -206,6 +209,25 @@ def _run_columns(op, case, column):
         return column.group_by(values, agg, ddof, _workers(case))
     finally:
         values.close()
+
+
+def _run_text(op, case, column):
+    """Operaciones de texto: devuelven `([columnas], codigo)`. `edit_distance` y
+    `huffman_decode` leen `input2` como segunda columna."""
+    if op == "lis":
+        return column.text_op("column_lis")
+    if op == "huffman_encode":
+        return column.huffman_encode()
+    if "input2" not in case:
+        raise CaseFailure("input2 falta")
+    other, code = _import(case["input2"])
+    if code != capi.OK:
+        return [], code
+    try:
+        name = "column_edit_distance" if op == "edit_distance" else "huffman_decode"
+        return column.text_op(name, other)
+    finally:
+        other.close()
 
 
 def _check_columns(expect, outputs):

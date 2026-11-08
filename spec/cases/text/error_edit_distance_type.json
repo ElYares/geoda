@@ -1,0 +1,9 @@
+{
+  "spec_version": 1,
+  "id": "text/error_edit_distance_type",
+  "description": "la distancia de edicion solo acepta utf8",
+  "input": { "dtype": "utf8", "values": ["a", "b"] },
+  "input2": { "dtype": "int64", "values": [1, 2] },
+  "op": "edit_distance",
+  "expect": { "error": "TYPE_MISMATCH" }
+}

@@ -81,6 +81,68 @@ static struct GeodaColumn *columna_plana(const char *formato, const void *valore
     return col;
 }
 
+/* Columna Int32 ("i") sin nulos de `n` valores. */
+static struct GeodaColumn *columna_i32(const int *valores, size_t n) {
+    struct ArrowSchema schema;
+    struct ArrowArray array;
+    void *datos = malloc(n * sizeof(int));
+    const void **buffers = malloc(2 * sizeof(void *));
+    memcpy(datos, valores, n * sizeof(int));
+    buffers[0] = NULL;
+    buffers[1] = datos;
+    memset(&schema, 0, sizeof schema);
+    schema.format = "i";
+    schema.name = "x";
+    schema.release = release_schema;
+    memset(&array, 0, sizeof array);
+    array.length = (long long)n;
+    array.n_buffers = 2;
+    array.buffers = buffers;
+    array.release = release_array;
+    struct GeodaColumn *col = NULL;
+    CHECK(geoda_column_from_arrow(&schema, &array, &col) == GEODA_OK);
+    schema.release(&schema);
+    return col;
+}
+
+/* Texto: LIS, Huffman de ida y vuelta y los errores que dejan los `out` en NULL. */
+static void prueba_texto(void) {
+    const long long serie[] = {10, 9, 2, 5, 3, 7, 101, 18};
+    struct GeodaColumn *valores = columna_plana("l", serie, 8);
+    struct GeodaColumn *indices = (struct GeodaColumn *)1;
+    CHECK(geoda_column_lis(valores, &indices) == GEODA_OK);
+    CHECK(geoda_column_len(indices) == 4);
+    geoda_column_free(indices);
+    indices = (struct GeodaColumn *)1;
+    CHECK(geoda_column_edit_distance(valores, valores, &indices) == GEODA_ERR_TYPE_MISMATCH);
+    CHECK(indices == NULL);
+    CHECK(geoda_column_lis(NULL, &indices) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_column_lis(valores, NULL) == GEODA_ERR_INVALID_ARGUMENT);
+
+    /* Huffman: aaabbc -> 9 bits, 256 frecuencias, y de vuelta los mismos 6 bytes. */
+    const int bytes[] = {97, 97, 97, 98, 98, 99};
+    struct GeodaColumn *datos = columna_i32(bytes, 6);
+    struct GeodaColumn *bits = (struct GeodaColumn *)1, *frecuencias = (struct GeodaColumn *)1;
+    CHECK(geoda_huffman_encode(datos, &bits, &frecuencias) == GEODA_OK);
+    CHECK(geoda_column_len(bits) == 9 && geoda_column_len(frecuencias) == 256);
+    struct GeodaColumn *vuelta = (struct GeodaColumn *)1;
+    CHECK(geoda_huffman_decode(frecuencias, bits, &vuelta) == GEODA_OK);
+    CHECK(geoda_column_len(vuelta) == 6);
+    geoda_column_free(vuelta);
+    geoda_column_free(bits);
+    geoda_column_free(frecuencias);
+    /* Bytes que viajan como Int64: TYPE_MISMATCH y los dos `out` en NULL. */
+    bits = frecuencias = (struct GeodaColumn *)1;
+    CHECK(geoda_huffman_encode(valores, &bits, &frecuencias) == GEODA_ERR_TYPE_MISMATCH);
+    CHECK(bits == NULL && frecuencias == NULL);
+    vuelta = (struct GeodaColumn *)1;
+    CHECK(geoda_huffman_decode(valores, valores, &vuelta) == GEODA_ERR_TYPE_MISMATCH);
+    CHECK(vuelta == NULL);
+    CHECK(geoda_huffman_decode(NULL, NULL, &vuelta) == GEODA_ERR_INVALID_ARGUMENT);
+    geoda_column_free(datos);
+    geoda_column_free(valores);
+}
+
 /* Grafos: se crea uno con pesos, se consulta y se libera; los errores dejan los `out` en NULL. */
 static void prueba_grafo(void) {
     /* 0 -> 1 (4), 0 -> 2 (1), 2 -> 1 (2), 1 -> 3 (1); el nodo 4 queda aislado. */
@@ -330,6 +392,7 @@ int main(void) {
     CHECK(geoda_column_slice(NULL, 0, 0, &corte) == GEODA_ERR_INVALID_ARGUMENT);
 
     prueba_grafo();
+    prueba_texto();
 
     if (fallos == 0) {
         puts("smoke: ok");

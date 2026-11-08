@@ -1,0 +1,17 @@
+{
+  "spec_version": 1,
+  "id": "text/error_huffman_decode_bad_frequencies",
+  "description": "las frecuencias deben ser 256 valores: INVALID_ARGUMENT",
+  "input": {
+    "dtype": "int64",
+    "values": [1, 2, 3]
+  },
+  "input2": {
+    "dtype": "bool",
+    "values": [false]
+  },
+  "op": "huffman_decode",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

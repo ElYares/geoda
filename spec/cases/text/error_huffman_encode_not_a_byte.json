@@ -1,0 +1,13 @@
+{
+  "spec_version": 1,
+  "id": "text/error_huffman_encode_not_a_byte",
+  "description": "256 no es un byte: INVALID_ARGUMENT",
+  "input": {
+    "dtype": "int32",
+    "values": [1, 256]
+  },
+  "op": "huffman_encode",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

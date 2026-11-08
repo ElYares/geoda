@@ -78,6 +78,10 @@ no conozca **hace fallar el caso**, no lo salta.
 | `corr` | — | correlacion de Pearson entre `input` e `input2` (`geoda_column_corr`) | `expect.value` |
 | `histogram` | `n_bins`, `range` (opcional) | histograma de ancho fijo (`geoda_column_histogram`) | `expect.columns` |
 | `group_by` | `agg`, `ddof` (solo `var`/`std`) | agregado de `input2` por los grupos de `input` (`geoda_column_group_by`) | `expect.columns` |
+| `edit_distance` | — | distancia de edicion fila a fila entre `input` e `input2` (`geoda_column_edit_distance`) | `expect.columns` |
+| `lis` | — | posiciones de la subsecuencia creciente mas larga (`geoda_column_lis`) | `expect.columns` |
+| `huffman_encode` | — | codifica los bytes de `input` (`geoda_huffman_encode`) | `expect.columns` |
+| `huffman_decode` | — | decodifica `input2` con las frecuencias de `input` (`geoda_huffman_decode`) | `expect.columns` |
 | `graph_bfs` | `source` | recorrido en anchura (`geoda_graph_bfs`) | `expect.columns` |
 | `graph_components` | — | componentes conexas (`geoda_graph_components`) | `expect.columns` y `expect.count` |
 | `graph_topological_order` | — | orden topologico (`geoda_graph_topological_order`) | `expect.columns` |
@@ -164,6 +168,24 @@ la consulta. Las columnas de resultado, en este orden:
 
 `expect.count`, `total` y `components` se comparan exactos (el flotante bit a bit).
 
+#### Texto y similitud (fase 5)
+
+- `edit_distance`: `input` e `input2` son `utf8`; miden lo mismo, o una de ellas mide 1 y se
+  compara con todas las filas de la otra. Una fila nula en cualquiera da nulo. Sale una columna
+  `int64`. Cuenta caracteres Unicode, no bytes. Largos distintos sin una de 1 es
+  `LENGTH_MISMATCH`; una entrada que no es `utf8`, `TYPE_MISMATCH`.
+- `lis`: `int32`, `int64` o `float64` sin nulos ni `NaN`. Sale una columna `int64` con las
+  posiciones de una subsecuencia **estrictamente** creciente mas larga, de menor a mayor. Un nulo
+  o un `NaN` es `INVALID_ARGUMENT`; `bool` y `utf8`, `UNSUPPORTED`.
+- `huffman_encode`: `input` es `int32` con bytes (`0..=255`, sin nulos). Salen dos columnas: `bits`
+  (`bool`, el primer bit es el de la raiz del arbol) y `frequencies` (`int64`, 256 filas). El
+  desempate es fijo: menor frecuencia y, a igualdad, el simbolo mas pequeno; el menor va a la
+  izquierda (`0`). Un solo simbolo distinto recibe el codigo `0`. Un valor fuera de `0..=255` o un
+  nulo es `INVALID_ARGUMENT`; otro tipo, `TYPE_MISMATCH`.
+- `huffman_decode`: `input` son las frecuencias (`int64`, 256 no negativas) e `input2` los bits
+  (`bool`, sin nulos). Sale una columna `int32` con los bytes. Bits que terminan a media palabra,
+  frecuencias que no son 256 o un nulo son `INVALID_ARGUMENT`.
+
 ### `expect`
 
 Se comprueban solo las claves presentes:
@@ -171,7 +193,7 @@ Se comprueban solo las claves presentes:
 - `dtype`, `values`: sobre la columna que **sale** de la capi (exportada).
 - `len`, `null_count`: sobre el handle resultante.
 - `value`: el numero que devuelve la operacion. Un `float64` se compara bit a bit y `NaN` es igual a `NaN`, como el resto de los flotantes; se escribe con los mismos valores especiales. Un resultado entero (`count`, y `sum`/`min`/`max` sobre enteros) se escribe como entero de JSON y se compara exacto.
-- `columns`: solo en `histogram` y `group_by`. Una lista, en el orden de arriba, de objetos con las
+- `columns`: en `histogram`, `group_by`, las operaciones de texto y las de grafo. Una lista, en el orden de arriba, de objetos con las
   mismas claves `dtype` y `values` de una columna exportada; se comprueba cada una contra la columna
   que **sale** de la capi, con la misma comparacion exacta. Tiene que haber tantas entradas como
   columnas devuelve la operacion.

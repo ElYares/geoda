@@ -1,0 +1,8 @@
+{
+  "spec_version": 1,
+  "id": "text/error_lis_null",
+  "description": "un nulo no tiene lugar en el orden: INVALID_ARGUMENT",
+  "input": { "dtype": "int32", "values": [1, null, 3] },
+  "op": "lis",
+  "expect": { "error": "INVALID_ARGUMENT" }
+}

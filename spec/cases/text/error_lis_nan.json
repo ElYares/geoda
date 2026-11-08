@@ -1,0 +1,8 @@
+{
+  "spec_version": 1,
+  "id": "text/error_lis_nan",
+  "description": "un NaN no es comparable: INVALID_ARGUMENT",
+  "input": { "dtype": "float64", "values": [1.0, "NaN", 3.0] },
+  "op": "lis",
+  "expect": { "error": "INVALID_ARGUMENT" }
+}

@@ -1,0 +1,9 @@
+{
+  "spec_version": 1,
+  "id": "text/edit_distance_pairs",
+  "description": "distancia de edicion fila a fila, por caracteres Unicode; un nulo en cualquiera da nulo",
+  "input": { "dtype": "utf8", "values": ["kitten", "añb", "", null, "casa"] },
+  "input2": { "dtype": "utf8", "values": ["sitting", "anb", "abc", "x", "casa"] },
+  "op": "edit_distance",
+  "expect": { "columns": [ { "dtype": "int64", "values": [3, 1, 3, null, 0] } ] }
+}

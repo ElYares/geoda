@@ -1,0 +1,8 @@
+{
+  "spec_version": 1,
+  "id": "text/lis_int64",
+  "description": "posiciones de una subsecuencia estrictamente creciente mas larga (longitud 4)",
+  "input": { "dtype": "int64", "values": [10, 9, 2, 5, 3, 7, 101, 18] },
+  "op": "lis",
+  "expect": { "columns": [ { "dtype": "int64", "values": [2, 4, 5, 7] } ] }
+}

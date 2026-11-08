@@ -1,0 +1,9 @@
+{
+  "spec_version": 1,
+  "id": "text/error_edit_distance_length",
+  "description": "largos distintos y ninguno de 1 es LENGTH_MISMATCH",
+  "input": { "dtype": "utf8", "values": ["a", "b"] },
+  "input2": { "dtype": "utf8", "values": ["a", "b", "c"] },
+  "op": "edit_distance",
+  "expect": { "error": "LENGTH_MISMATCH" }
+}

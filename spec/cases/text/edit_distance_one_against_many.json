@@ -1,0 +1,9 @@
+{
+  "spec_version": 1,
+  "id": "text/edit_distance_one_against_many",
+  "description": "una columna de una fila se compara con todas las filas de la otra",
+  "input": { "dtype": "utf8", "values": ["casa", "cosa", null, "cazar"] },
+  "input2": { "dtype": "utf8", "values": ["casa"] },
+  "op": "edit_distance",
+  "expect": { "columns": [ { "dtype": "int64", "values": [0, 1, null, 2] } ] }
+}

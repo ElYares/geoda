@@ -13,7 +13,10 @@ mod error;
 use std::ffi::c_char;
 use std::ptr;
 
-use geoda_algo::{Method, Network, percentile_column};
+use geoda_algo::{
+    Method, Network, edit_distance_columns, huffman_decode_column, huffman_encode_column,
+    lis_column, percentile_column,
+};
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
 };
@@ -1075,6 +1078,138 @@ pub unsafe extern "C" fn geoda_graph_mst(
             *out_total = forest.total_weight;
             *out_components = components;
         }
+        Ok(())
+    })
+}
+
+/// Referencia a la columna de un handle, o error si es NULL.
+///
+/// # Safety
+/// `column` debe ser NULL o un handle valido.
+unsafe fn column_ref<'a>(column: *const GeodaColumn, name: &str) -> Result<&'a Column, CError> {
+    // SAFETY: `as_ref` revisa NULL; la validez del handle es contrato.
+    unsafe { column.as_ref() }
+        .map(|c| &c.0)
+        .ok_or_else(|| invalid_argument(&format!("{name} es NULL")))
+}
+
+/// Distancia de edicion (Levenshtein, por caracteres Unicode) fila a fila entre dos columnas
+/// `Utf8`. Las dos miden lo mismo, o una mide 1 y se compara con todas las filas de la otra.
+/// Una fila nula en cualquiera da nulo. Devuelve una columna `Int64` nueva por `*out`.
+///
+/// `*out` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y `*out`
+/// queda en NULL: `GEODA_ERR_TYPE_MISMATCH` si alguna no es `Utf8` y
+/// `GEODA_ERR_LENGTH_MISMATCH` si miden distinto y ninguna mide 1.
+///
+/// # Safety
+/// `a` y `b` deben ser handles validos y `out` escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_edit_distance(
+    a: *const GeodaColumn,
+    b: *const GeodaColumn,
+    out: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out]) }?;
+        // SAFETY: contrato de `column_ref`.
+        let (a, b) = unsafe { (column_ref(a, "a")?, column_ref(b, "b")?) };
+        let distances = edit_distance_columns(a, b)?;
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { *out = into_handle(distances) };
+        Ok(())
+    })
+}
+
+/// Subsecuencia estrictamente creciente mas larga (LIS) de una columna `Int32`, `Int64` o
+/// `Float64`. Devuelve una columna `Int64` nueva por `*out` con las posiciones de sus elementos,
+/// de menor a mayor; su largo es el de la LIS.
+///
+/// `*out` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y `*out` queda
+/// en NULL: `GEODA_ERR_INVALID_ARGUMENT` si hay algun nulo o `NaN`, y `GEODA_ERR_UNSUPPORTED`
+/// para `Bool` y `Utf8`.
+///
+/// # Safety
+/// `column` debe ser un handle valido y `out` escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_lis(
+    column: *const GeodaColumn,
+    out: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out]) }?;
+        // SAFETY: contrato de `column_ref`.
+        let indices = lis_column(unsafe { column_ref(column, "column") }?)?;
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { *out = into_handle(indices) };
+        Ok(())
+    })
+}
+
+/// Codifica con Huffman una columna `Int32` de bytes (valores `0..=255`, sin nulos). Devuelve
+/// **dos columnas nuevas**:
+///
+/// - `*out_bits`: `Bool`, los bits codificados (una fila por bit, el primero es el de la raiz).
+/// - `*out_frequencies`: `Int64`, 256 filas con cuantas veces aparece cada byte. Es todo lo que
+///   `geoda_huffman_decode` necesita: la tabla se reconstruye de ahi, con desempate fijo.
+///
+/// Cada columna debe liberarse con `geoda_column_free`. Si falla, devuelve un codigo negativo y
+/// los dos `out` quedan en NULL: `GEODA_ERR_TYPE_MISMATCH` si no es `Int32` y
+/// `GEODA_ERR_INVALID_ARGUMENT` si hay nulos o un valor fuera de `0..=255`.
+///
+/// # Safety
+/// `data` debe ser un handle valido y los dos `out` deben ser escribibles y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_huffman_encode(
+    data: *const GeodaColumn,
+    out_bits: *mut *mut GeodaColumn,
+    out_frequencies: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: los `out` son escribibles si no son NULL (contrato).
+        unsafe { null_outs(&[out_bits, out_frequencies]) }?;
+        // SAFETY: contrato de `column_ref`.
+        let (bits, frequencies) = huffman_encode_column(unsafe { column_ref(data, "data") }?)?;
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_bits = into_handle(bits);
+            *out_frequencies = into_handle(frequencies);
+        }
+        Ok(())
+    })
+}
+
+/// Decodifica con Huffman una columna `Bool` de bits, con la tabla que sale de `frequencies`
+/// (`Int64`, 256 filas no negativas, las de `geoda_huffman_encode`). Devuelve una columna
+/// `Int32` nueva por `*out_data` con los bytes.
+///
+/// `*out_data` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y
+/// `*out_data` queda en NULL: `GEODA_ERR_TYPE_MISMATCH` si los tipos no son `Int64` y `Bool`, y
+/// `GEODA_ERR_INVALID_ARGUMENT` si hay nulos, las frecuencias no son 256 valores no negativos o
+/// los bits no se pueden decodificar con esa tabla (terminan a media palabra, o no hay simbolos).
+///
+/// # Safety
+/// `frequencies` y `bits` deben ser handles validos y `out_data` escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_huffman_decode(
+    frequencies: *const GeodaColumn,
+    bits: *const GeodaColumn,
+    out_data: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out_data` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out_data]) }?;
+        // SAFETY: contrato de `column_ref`.
+        let (frequencies, bits) = unsafe {
+            (
+                column_ref(frequencies, "frequencies")?,
+                column_ref(bits, "bits")?,
+            )
+        };
+        let data = huffman_decode_column(frequencies, bits)?;
+        // SAFETY: `out_data` es escribible (arriba).
+        unsafe { *out_data = into_handle(data) };
         Ok(())
     })
 }

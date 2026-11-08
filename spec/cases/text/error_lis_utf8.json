@@ -1,0 +1,8 @@
+{
+  "spec_version": 1,
+  "id": "text/error_lis_utf8",
+  "description": "LIS no esta definida para texto",
+  "input": { "dtype": "utf8", "values": ["a", "b"] },
+  "op": "lis",
+  "expect": { "error": "UNSUPPORTED" }
+}

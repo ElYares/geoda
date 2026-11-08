@@ -33,6 +33,10 @@ Los nulos se ignoran. Un `NaN` en los datos da `NaN` en el resultado, nunca se o
 | `corr(x, y)` | `float` en `[-1, 1]` (Pearson; las filas con nulo en cualquiera se descartan) |
 | `histogram(x, bins, range=None)` | `dict` con `edges`, `counts`, `below`, `above`, `nulls`, `nans` |
 | `group_by(claves).sum/count/min/max/mean/var/std(valores)` | `dict` con `keys` y `values` (listas; `None` es el grupo de claves nulas) |
+| `edit_distance(a, b)` | `int` con dos `str`; si no, lista con la distancia de cada fila (`None` si alguna es nula). Acepta `str`, listas de `str`/`None` o columnas Arrow de texto; las dos miden lo mismo o una mide 1. Cuenta caracteres Unicode |
+| `lis(x)` | `dict` con `length` e `indices`: la subsecuencia estrictamente creciente mas larga. `None` o `NaN` lanzan `ValueError` |
+| `huffman_encode(datos)` | `dict` con `bits` (`bytes`, empaquetados desde el bit mas alto), `bit_len` y `frequencies` (256 `int`). `datos` es `bytes`, `bytearray` o `str` (UTF-8) |
+| `huffman_decode(bits, bit_len, frequencies)` | `bytes`; la tabla se reconstruye de las frecuencias. Bits que no se pueden decodificar lanzan `ValueError` |
 
 - **`workers` (por defecto 1)** en `sum`, `min`, `max`, `mean`, `var`, `std`, `corr`, `histogram` y
   `group_by(...).<agg>` reparte los bloques de 1024 valores entre ese numero de hilos. El
@@ -72,6 +76,8 @@ VIRTUAL_ENV=$PWD/.venv .venv/bin/maturin develop
   Hace lo mismo que `crates/capi/tests/spec.rs`.
 - `tests/test_interop_pyarrow.py`: pyarrow como oraculo de Arrow, en ambos sentidos.
   Se salta si `pyarrow` no esta instalado; en CI debe correr.
+- `tests/test_text.py`: la fase 5 (distancia de edicion, LIS y Huffman) y los casos de
+  `spec/cases/text/` que se pueden ejecutar por el binding.
 - `tests/test_arrow_input.py`, `test_stats.py`, `test_tables.py`: la API de arriba, con listas y
   con columnas Arrow (los de Arrow necesitan `pyarrow` y `numpy`).
 - `tests/capi.py`: declaraciones `ctypes` de la C-API y de las structs de Arrow.

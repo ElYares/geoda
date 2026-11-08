@@ -174,6 +174,16 @@ def _load():
             [p_handle, ctypes.c_size_t] + [ctypes.POINTER(p_handle)] * 2,
             ctypes.c_int32,
         ),
+        "geoda_column_edit_distance": ([p_handle, p_handle, ctypes.POINTER(p_handle)], ctypes.c_int32),
+        "geoda_column_lis": ([p_handle, ctypes.POINTER(p_handle)], ctypes.c_int32),
+        "geoda_huffman_encode": (
+            [p_handle, ctypes.POINTER(p_handle), ctypes.POINTER(p_handle)],
+            ctypes.c_int32,
+        ),
+        "geoda_huffman_decode": (
+            [p_handle, p_handle, ctypes.POINTER(p_handle)],
+            ctypes.c_int32,
+        ),
         "geoda_graph_mst": (
             [
                 p_handle,
@@ -300,6 +310,22 @@ class Column:
         code = LIB.geoda_column_group_by(
             self.handle, values.handle, AGG[agg], ddof, workers, *(ctypes.byref(o) for o in outs)
         )
+        return Column._own(outs, code)
+
+    def text_op(self, name, *others):
+        """Operacion de texto `geoda_<name>` con `self` y `others` de entrada y un `out`:
+        `([columna], 0)` o `([], codigo)`. Sirve para `column_edit_distance`, `column_lis` y
+        `huffman_decode` (en esta ultima `self` son las frecuencias y `others[0]` los bits)."""
+        outs = [ctypes.c_void_p(None)]
+        code = getattr(LIB, f"geoda_{name}")(
+            self.handle, *(o.handle for o in others), *(ctypes.byref(o) for o in outs)
+        )
+        return Column._own(outs, code)
+
+    def huffman_encode(self):
+        """`([bits, frecuencias], 0)` o `([], codigo)`; `self` son los bytes (`Int32`)."""
+        outs = [ctypes.c_void_p(None) for _ in range(2)]
+        code = LIB.geoda_huffman_encode(self.handle, *(ctypes.byref(o) for o in outs))
         return Column._own(outs, code)
 
     def export(self):
