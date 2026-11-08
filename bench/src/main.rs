@@ -25,7 +25,7 @@ use geoda_algo::{
     Dataset, Graph, Huffman, KMeansParams, Matrix, Transactions, TreeParams, WeightedGraph,
     association_rules, bfs, dedupe_similar, dfs, dijkstra, edit_distance, fit_tree,
     frequent_itemsets, kmeans, least_squares, lis, lu, median_of_medians, merge_sort, quickselect,
-    single_linkage,
+    single_linkage, svd,
 };
 use geoda_core::file::{ColumnFileReader, ColumnFileWriter};
 use geoda_core::{Column, DataType, PrimitiveBuilder};
@@ -579,6 +579,19 @@ fn bench_linalg() {
         ms(started.elapsed()),
         fit.residual_norm
     );
+
+    // SVD de 200 x 50 y de 1000 x 20.
+    for (rows, cols) in [(200, 50), (1000, 20)] {
+        let tall = random_matrix(&mut rng, rows, cols);
+        let started = Instant::now();
+        let decomposition = svd(black_box(&tall)).expect("converge");
+        println!(
+            "SVD de {rows} x {cols}: {} ms, valor singular mayor {:.3} y menor {:.3}",
+            ms(started.elapsed()),
+            decomposition.s[0],
+            decomposition.s[cols - 1]
+        );
+    }
 }
 
 fn ms(d: Duration) -> String {

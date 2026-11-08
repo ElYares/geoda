@@ -27,6 +27,7 @@ pub mod select;
 pub mod shortest;
 pub mod sort;
 pub mod spanning;
+pub mod svd;
 pub mod text;
 pub mod traverse;
 pub mod tree;
@@ -57,6 +58,7 @@ pub use select::{Method, Scalar, median_of_medians, quickselect, select_column};
 pub use shortest::{ShortestPaths, dijkstra, reconstruct_path};
 pub use sort::{merge_sort, sort_column};
 pub use spanning::{SpanningForest, kruskal};
+pub use svd::{Svd, svd};
 pub use text::{
     edit_distance_columns, huffman_decode_column, huffman_encode_column, huffman_from_counts,
     lis_column,
