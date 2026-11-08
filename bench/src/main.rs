@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use geoda_algo::{
     Dataset, Graph, Huffman, KMeansParams, Matrix, Transactions, TreeParams, WeightedGraph,
-    association_rules, bfs, dedupe_similar, dfs, dijkstra, edit_distance, fit_tree,
+    association_rules, bfs, dedupe_similar, dfs, dijkstra, edit_distance, fit_regression, fit_tree,
     frequent_itemsets, kmeans, least_squares, lis, lu, median_of_medians, merge_sort, quickselect,
     single_linkage, svd,
 };
@@ -592,6 +592,24 @@ fn bench_linalg() {
             decomposition.s[cols - 1]
         );
     }
+
+    // Regresion: 100 000 filas x 8 variables con y = 1 + sum(2 x_j) + ruido.
+    let columns = blobs(&mut rng, 100_000, 8, 4);
+    let refs: Vec<&Column> = columns.iter().collect();
+    let data = Dataset::from_columns(&refs).expect("matriz");
+    let y: Vec<f64> = (0..data.rows())
+        .map(|i| 1.0 + data.row(i).iter().map(|x| 2.0 * x).sum::<f64>() + unit(&mut rng) - 0.5)
+        .collect();
+    let started = Instant::now();
+    let model = fit_regression(black_box(&data), black_box(&y), true).expect("rango completo");
+    println!(
+        "regresion de {} filas x {} variables: {} ms, intercepto {:.3}, R^2 {:.6}",
+        data.rows(),
+        data.cols(),
+        ms(started.elapsed()),
+        model.intercept,
+        model.r_squared
+    );
 }
 
 fn ms(d: Duration) -> String {
