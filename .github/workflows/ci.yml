@@ -59,6 +59,19 @@ jobs:
         env:
           CXX: ${{ matrix.cxx }}
 
+  java:
+    # El binding de Java con la API de memoria externa (FFM, JDK 22+): sin jextract.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+      - run: cargo build -p geoda-capi
+      - run: bindings/java/test.sh
+
   python:
     # El binding (PyO3 + maturin), el runner de spec por ctypes y el interop con
     # pyarrow. Falla si algun test de pyarrow se salta: aqui debe correr.
