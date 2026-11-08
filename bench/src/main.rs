@@ -23,9 +23,9 @@ use std::time::{Duration, Instant};
 
 use geoda_algo::{
     Dataset, Graph, Huffman, KMeansParams, Matrix, Transactions, TreeParams, WeightedGraph,
-    association_rules, bfs, dedupe_similar, dfs, dijkstra, edit_distance, fit_regression, fit_tree,
-    frequent_itemsets, kmeans, least_squares, lis, lu, median_of_medians, merge_sort, quickselect,
-    single_linkage, svd,
+    association_rules, bfs, dedupe_similar, dfs, dijkstra, edit_distance, fit_pca, fit_regression,
+    fit_tree, frequent_itemsets, kmeans, least_squares, lis, lu, median_of_medians, merge_sort,
+    quickselect, single_linkage, svd,
 };
 use geoda_core::file::{ColumnFileReader, ColumnFileWriter};
 use geoda_core::{Column, DataType, PrimitiveBuilder};
@@ -609,6 +609,17 @@ fn bench_linalg() {
         ms(started.elapsed()),
         model.intercept,
         model.r_squared
+    );
+
+    // PCA: las mismas 100 000 x 8 con 3 componentes.
+    let started = Instant::now();
+    let pca = fit_pca(black_box(&data), 3).expect("pca");
+    println!(
+        "PCA de {} filas x {} variables, 3 componentes: {} ms, razones de varianza {:.3?}",
+        data.rows(),
+        data.cols(),
+        ms(started.elapsed()),
+        pca.explained_variance_ratio
     );
 }
 
