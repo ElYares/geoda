@@ -25,6 +25,7 @@ pub mod sort;
 pub mod spanning;
 pub mod text;
 pub mod traverse;
+pub mod tree;
 
 pub use components::{Components, UnionFind, components, topological_order};
 pub use dedupe::{Dedupe, MAX_INDEXED_DISTANCE, dedupe_column, dedupe_similar};
@@ -49,3 +50,4 @@ pub use text::{
     lis_column,
 };
 pub use traverse::{Bfs, Dfs, bfs, dfs};
+pub use tree::{DecisionTree, Node, TreeParams, fit as fit_tree, fit_columns as fit_tree_columns};

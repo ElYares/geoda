@@ -21,8 +21,9 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use geoda_algo::{
-    Dataset, Graph, Huffman, KMeansParams, WeightedGraph, bfs, dedupe_similar, dfs, dijkstra,
-    edit_distance, kmeans, lis, median_of_medians, merge_sort, quickselect, single_linkage,
+    Dataset, Graph, Huffman, KMeansParams, TreeParams, WeightedGraph, bfs, dedupe_similar, dfs,
+    dijkstra, edit_distance, fit_tree, kmeans, lis, median_of_medians, merge_sort, quickselect,
+    single_linkage,
 };
 use geoda_core::file::{ColumnFileReader, ColumnFileWriter};
 use geoda_core::{Column, DataType, PrimitiveBuilder};
@@ -449,6 +450,31 @@ fn bench_mining() {
         data.cols(),
         result.inertia,
         result.iterations,
+        ms(started.elapsed())
+    );
+
+    // Arbol de decision: las 8 nubes son las clases; etiqueta = nube mas cercana a la fila.
+    let tree_rows = data.rows();
+    let labels: Vec<i64> = result
+        .labels
+        .iter()
+        .map(|&l| i64::try_from(l).expect("cabe"))
+        .collect();
+    let started = Instant::now();
+    let tree = fit_tree(black_box(&data), &labels, TreeParams::default()).expect("arbol");
+    let fit_time = started.elapsed();
+    let started = Instant::now();
+    let predicted = tree.predict(&data).expect("prediccion");
+    let hits = predicted
+        .iter()
+        .zip(&labels)
+        .filter(|(p, l)| p == l)
+        .count();
+    println!(
+        "arbol de decision de {tree_rows} filas x 4 variables, 8 clases: {} nodos, profundidad {}, entrena en {} ms, predice en {} ms, acierta {hits} de {tree_rows}",
+        tree.nodes().len(),
+        tree.depth(),
+        ms(fit_time),
         ms(started.elapsed())
     );
 
