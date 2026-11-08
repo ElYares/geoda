@@ -87,6 +87,8 @@ no conozca **hace fallar el caso**, no lo salta.
 | `hierarchical` | — | dendrograma de enlace simple sobre `inputs` (`geoda_hierarchical`) | `expect.columns` |
 | `dendrogram_cut` | `n`, `k` | corta un dendrograma dado por `input` (left) e `input2` (right) (`geoda_dendrogram_cut`) | `expect.columns` |
 | `tree_fit_predict` | `max_depth`, `min_samples_leaf` | entrena un arbol con `inputs` y `labels` y predice `predict_inputs` (`geoda_tree_fit` y `geoda_tree_predict`) | `expect.columns` y `expect.nodes` |
+| `apriori_itemsets` | `min_support` | conjuntos frecuentes de las transacciones `input` (transaccion) e `input2` (item) (`geoda_apriori_itemsets`) | `expect.columns` |
+| `apriori_rules` | `min_support`, `min_confidence` | reglas de asociacion de esas transacciones (`geoda_apriori_rules`) | `expect.columns` |
 | `graph_bfs` | `source` | recorrido en anchura (`geoda_graph_bfs`) | `expect.columns` |
 | `graph_components` | — | componentes conexas (`geoda_graph_components`) | `expect.columns` y `expect.count` |
 | `graph_topological_order` | — | orden topologico (`geoda_graph_topological_order`) | `expect.columns` |
@@ -211,6 +213,16 @@ Una matriz de datos es una **lista de columnas** (una por variable): un caso de 
 - `hierarchical`: salen `left`, `right`, `height` y `size` (`n - 1` filas cada una; vacias con una
   sola fila). Los grupos `0..n` son las filas y la union `s` crea el grupo `n + s`. Mas de 5000 filas
   es `INVALID_ARGUMENT`.
+- `apriori_itemsets` / `apriori_rules`: las transacciones van en **formato largo**: `input` es
+  `transaction` e `input2` es `item` (dos columnas `int64` del mismo largo, ids `>= 0`, sin nulos; un
+  item repetido dentro de una transaccion cuenta una vez). `args.min_support` es un conteo absoluto
+  (>= 1). `apriori_itemsets` saca `set` (id del conjunto, una fila por item), `item` y `support`
+  (una fila por conjunto); los conjuntos van por tamano y luego en orden lexicografico, con los items
+  de menor a mayor. `apriori_rules` (`args.min_confidence` en `(0, 1]`) saca `antecedent` y
+  `consequent` (ids de esos mismos conjuntos), `support` (`int64`), `confidence` y `lift` (`float64`,
+  bit a bit), por conjunto frecuente y, dentro de cada uno, por la mascara de bits del antecedente.
+  `min_support = 0`, ids negativos o nulos y `min_confidence` fuera de `(0, 1]` son
+  `INVALID_ARGUMENT`; largos distintos, `LENGTH_MISMATCH`.
 - `tree_fit_predict` (`args.max_depth` por defecto 8, `args.min_samples_leaf` por defecto 1): `inputs`
   son las variables de entrenamiento, `labels` una columna `int64` (>= 0, sin nulos; puede ser dispersa)
   y `predict_inputs` (opcional, por defecto `inputs`) las filas a predecir. Sale una columna `int64`

@@ -15,7 +15,7 @@ CASES_DIR = capi.ROOT / "spec" / "cases"
 SCALAR_OPS = ("count", "sum", "min", "max", "mean", "var", "std", "corr")
 COLUMNS_OPS = ("histogram", "group_by")
 GRAPH_OPS = ("graph_bfs", "graph_components", "graph_topological_order", "graph_dijkstra", "graph_mst")
-TEXT_OPS = ("edit_distance", "lis", "huffman_encode", "huffman_decode", "dedupe", "dendrogram_cut")
+TEXT_OPS = ("edit_distance", "lis", "huffman_encode", "huffman_decode", "dedupe", "dendrogram_cut", "apriori_itemsets", "apriori_rules")
 MATRIX_OPS = ("kmeans", "hierarchical", "tree_fit_predict")
 OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile") + SCALAR_OPS + COLUMNS_OPS + TEXT_OPS + MATRIX_OPS
 
@@ -316,6 +316,16 @@ def _run_text(op, case, column):
     if code != capi.OK:
         return [], code
     try:
+        if op in ("apriori_itemsets", "apriori_rules"):
+            args = case.get("args", {})
+            min_support = args.get("min_support")
+            if not isinstance(min_support, int) or isinstance(min_support, bool) or min_support < 0:
+                raise CaseFailure("args.min_support falta o no es un entero >= 0")
+            if op == "apriori_itemsets":
+                return column.apriori_itemsets(other, min_support)
+            if "min_confidence" not in args:
+                raise CaseFailure("args.min_confidence falta")
+            return column.apriori_rules(other, min_support, capi.parse_float(args["min_confidence"]))
         if op == "dendrogram_cut":
             args = case.get("args", {})
             for key in ("n", "k"):

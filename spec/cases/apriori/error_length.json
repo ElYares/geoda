@@ -1,0 +1,20 @@
+{
+  "spec_version": 1,
+  "id": "apriori/error_length",
+  "description": "columnas de largos distintos son LENGTH_MISMATCH",
+  "input": {
+    "dtype": "int64",
+    "values": [0, 0, 1]
+  },
+  "input2": {
+    "dtype": "int64",
+    "values": [1, 2]
+  },
+  "op": "apriori_itemsets",
+  "args": {
+    "min_support": 1
+  },
+  "expect": {
+    "error": "LENGTH_MISMATCH"
+  }
+}

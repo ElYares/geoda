@@ -2,7 +2,8 @@
 //! estadisticos escalares (`count`, `sum`, `min`, `max`, `mean`, `var`, `std`, `corr`), `histogram`
 //! y `group_aggregate` (la base de `geoda.group_by`), la clase `Graph` (fase 4) y el texto de la fase 5 (`edit_distance`, `dedupe`, `lis`,
 //! `huffman_encode` y `huffman_decode`), el clustering de la fase 6 (`kmeans`,
-//! `hierarchical` y `cut_tree`) y el arbol de decision (`DecisionTree`).
+//! `hierarchical` y `cut_tree`) el arbol de decision (`DecisionTree`) y las reglas de asociacion (`frequent_itemsets` y
+//! `association_rules`).
 //!
 //! Todas las funciones numericas aceptan una lista o cualquier objeto con el protocolo Arrow
 //! `PyCapsule` (`__arrow_c_array__`): `pyarrow`, `polars`, `pandas` con Arrow... (S10). Los
@@ -20,10 +21,12 @@ use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList};
 
 use geoda_algo::{
-    Dataset, DecisionTree as Tree, Huffman, KMeansParams, Method, Network, TreeParams, Value,
-    cut_merges, dedupe_column, edit_distance_columns, fit_tree, frequencies, huffman_from_counts,
-    kmeans_columns, lis_column, median_column, percentile_column, single_linkage_columns,
+    Dataset, DecisionTree as Tree, Huffman, KMeansParams, Method, Network, Transactions,
+    TreeParams, Value, cut_merges, dedupe_column, edit_distance_columns, fit_tree, frequencies,
+    huffman_from_counts, kmeans_columns, lis_column, median_column, percentile_column,
+    single_linkage_columns,
 };
+use geoda_algo::{association_rules as rules_of, frequent_itemsets as itemsets_of};
 use geoda_core::interop::arrow_c::{ArrowArray, ArrowSchema, import_column};
 use geoda_core::{Column, DataType, Error, PrimitiveBuilder, Utf8Builder};
 use geoda_stats::{
@@ -643,6 +646,71 @@ impl DecisionTree {
     }
 }
 
+/// Transacciones de entrada: una lista de transacciones, cada una con sus items (enteros `>= 0`;
+/// un item repetido dentro de una transaccion cuenta una vez).
+fn transactions_of(transactions: &[Vec<i64>]) -> PyResult<Transactions> {
+    Transactions::from_lists(transactions).map_err(|e| value_error(&e))
+}
+
+/// Conjuntos de items frecuentes (algoritmo Apriori). `transactions` es una lista de listas de
+/// items enteros `>= 0`; `min_support` es un conteo absoluto de transacciones (al menos 1).
+/// Devuelve `{"itemsets": [[int]], "support": [int], "transactions": int}`: los conjuntos por
+/// tamano y luego en orden lexicografico (cada uno con sus items de menor a mayor), cuantas
+/// transacciones contienen a cada uno, y el total de transacciones.
+///
+/// # Errors
+/// `ValueError` si `min_support` es 0 o hay un item negativo.
+#[pyfunction]
+// PyO3 extrae la lista de Python por valor; no hay forma de recibirla por referencia.
+#[allow(clippy::needless_pass_by_value)]
+fn frequent_itemsets(
+    py: Python<'_>,
+    transactions: Vec<Vec<i64>>,
+    min_support: usize,
+) -> PyResult<Bound<'_, PyDict>> {
+    let found =
+        itemsets_of(&transactions_of(&transactions)?, min_support).map_err(|e| value_error(&e))?;
+    let out = PyDict::new(py);
+    out.set_item("itemsets", found.itemsets)?;
+    out.set_item("support", found.support)?;
+    out.set_item("transactions", found.transactions)?;
+    Ok(out)
+}
+
+/// Reglas de asociacion `antecedent -> consequent` con soporte `>= min_support` y confianza
+/// `>= min_confidence` (en `(0, 1]`). Devuelve una lista de `dict` con `antecedent` y
+/// `consequent` (listas de items), `support` (transacciones con los dos), `confidence`
+/// (`soporte(A u C) / soporte(A)`) y `lift` (`confianza / (soporte(C) / N)`), por conjunto
+/// frecuente y, dentro de cada uno, por la mascara de bits del antecedente.
+///
+/// # Errors
+/// `ValueError` si `min_support` es 0, `min_confidence` no esta en `(0, 1]`, hay un item negativo
+/// o un conjunto frecuente tiene mas de 20 items.
+#[pyfunction]
+// PyO3 extrae la lista de Python por valor; no hay forma de recibirla por referencia.
+#[allow(clippy::needless_pass_by_value)]
+fn association_rules(
+    py: Python<'_>,
+    transactions: Vec<Vec<i64>>,
+    min_support: usize,
+    min_confidence: f64,
+) -> PyResult<Bound<'_, PyList>> {
+    let found =
+        itemsets_of(&transactions_of(&transactions)?, min_support).map_err(|e| value_error(&e))?;
+    let rules = rules_of(&found, min_confidence).map_err(|e| value_error(&e))?;
+    let out = PyList::empty(py);
+    for rule in rules {
+        let entry = PyDict::new(py);
+        entry.set_item("antecedent", &found.itemsets[rule.antecedent])?;
+        entry.set_item("consequent", &found.itemsets[rule.consequent])?;
+        entry.set_item("support", rule.support)?;
+        entry.set_item("confidence", rule.confidence)?;
+        entry.set_item("lift", rule.lift)?;
+        out.append(entry)?;
+    }
+    Ok(out)
+}
+
 /// Subsecuencia estrictamente creciente mas larga (LIS) de una lista de numeros o una columna
 /// Arrow numerica. Devuelve `{"length": int, "indices": [int]}` con las posiciones de sus
 /// elementos, de menor a mayor.
@@ -849,6 +917,8 @@ fn _geoda(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hierarchical, m)?)?;
     m.add_function(wrap_pyfunction!(cut_tree, m)?)?;
     m.add_class::<DecisionTree>()?;
+    m.add_function(wrap_pyfunction!(frequent_itemsets, m)?)?;
+    m.add_function(wrap_pyfunction!(association_rules, m)?)?;
     m.add_function(wrap_pyfunction!(huffman_encode, m)?)?;
     m.add_function(wrap_pyfunction!(huffman_decode, m)?)?;
     m.add_class::<Graph>()?;

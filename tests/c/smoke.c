@@ -236,6 +236,49 @@ static void prueba_arbol(void) {
     geoda_column_free(y);
 }
 
+/* Apriori: conjuntos y reglas en formato largo; los errores dejan todos los `out` en NULL. */
+static void prueba_apriori(void) {
+    /* {1,2,3}, {1,2}, {1,3}, {2,3} */
+    const long long tx[] = {0, 0, 0, 1, 1, 2, 2, 3, 3}, it[] = {1, 2, 3, 1, 2, 1, 3, 2, 3};
+    struct GeodaColumn *transaccion = columna_plana("l", tx, 9);
+    struct GeodaColumn *item = columna_plana("l", it, 9);
+    struct GeodaColumn *conjunto = (struct GeodaColumn *)1, *items = (struct GeodaColumn *)1;
+    struct GeodaColumn *soporte = (struct GeodaColumn *)1;
+    CHECK(geoda_apriori_itemsets(transaccion, item, 2, &conjunto, &items, &soporte) == GEODA_OK);
+    CHECK(geoda_column_len(conjunto) == 9 && geoda_column_len(items) == 9);
+    CHECK(geoda_column_len(soporte) == 6);
+    geoda_column_free(conjunto);
+    geoda_column_free(items);
+    geoda_column_free(soporte);
+    /* min_support = 0: INVALID_ARGUMENT y los tres `out` en NULL. */
+    conjunto = items = soporte = (struct GeodaColumn *)1;
+    CHECK(geoda_apriori_itemsets(transaccion, item, 0, &conjunto, &items, &soporte) ==
+          GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(conjunto == NULL && items == NULL && soporte == NULL);
+    CHECK(geoda_apriori_itemsets(NULL, item, 2, &conjunto, &items, &soporte) ==
+          GEODA_ERR_INVALID_ARGUMENT);
+
+    struct GeodaColumn *antecedente = (struct GeodaColumn *)1, *consecuente = (struct GeodaColumn *)1;
+    struct GeodaColumn *sop = (struct GeodaColumn *)1, *confianza = (struct GeodaColumn *)1;
+    struct GeodaColumn *lift = (struct GeodaColumn *)1;
+    CHECK(geoda_apriori_rules(transaccion, item, 2, 0.6, &antecedente, &consecuente, &sop,
+                              &confianza, &lift) == GEODA_OK);
+    CHECK(geoda_column_len(antecedente) == 6 && geoda_column_len(lift) == 6);
+    geoda_column_free(antecedente);
+    geoda_column_free(consecuente);
+    geoda_column_free(sop);
+    geoda_column_free(confianza);
+    geoda_column_free(lift);
+    /* Confianza fuera de (0, 1]. */
+    antecedente = consecuente = sop = confianza = lift = (struct GeodaColumn *)1;
+    CHECK(geoda_apriori_rules(transaccion, item, 2, 1.5, &antecedente, &consecuente, &sop,
+                              &confianza, &lift) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(antecedente == NULL && consecuente == NULL && sop == NULL && confianza == NULL &&
+          lift == NULL);
+    geoda_column_free(transaccion);
+    geoda_column_free(item);
+}
+
 /* Grafos: se crea uno con pesos, se consulta y se libera; los errores dejan los `out` en NULL. */
 static void prueba_grafo(void) {
     /* 0 -> 1 (4), 0 -> 2 (1), 2 -> 1 (2), 1 -> 3 (1); el nodo 4 queda aislado. */
@@ -488,6 +531,7 @@ int main(void) {
     prueba_texto();
     prueba_cluster();
     prueba_arbol();
+    prueba_apriori();
 
     if (fallos == 0) {
         puts("smoke: ok");

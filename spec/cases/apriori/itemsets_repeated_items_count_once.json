@@ -1,0 +1,33 @@
+{
+  "spec_version": 1,
+  "id": "apriori/itemsets_repeated_items_count_once",
+  "description": "un item repetido dentro de una transaccion cuenta una vez",
+  "input": {
+    "dtype": "int64",
+    "values": [0, 0, 0, 1]
+  },
+  "input2": {
+    "dtype": "int64",
+    "values": [5, 5, 5, 5]
+  },
+  "op": "apriori_itemsets",
+  "args": {
+    "min_support": 2
+  },
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int64",
+        "values": [0]
+      },
+      {
+        "dtype": "int64",
+        "values": [5]
+      },
+      {
+        "dtype": "int64",
+        "values": [2]
+      }
+    ]
+  }
+}

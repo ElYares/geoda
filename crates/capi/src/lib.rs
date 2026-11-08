@@ -14,9 +14,10 @@ use std::ffi::c_char;
 use std::ptr;
 
 use geoda_algo::{
-    DecisionTree, KMeansParams, Method, Network, TreeParams, cut_merges, dedupe_column,
-    edit_distance_columns, fit_tree_columns, huffman_decode_column, huffman_encode_column,
-    kmeans_columns, lis_column, percentile_column, single_linkage_columns,
+    DecisionTree, KMeansParams, Method, Network, Transactions, TreeParams, association_rules,
+    cut_merges, dedupe_column, edit_distance_columns, fit_tree_columns, frequent_itemsets,
+    huffman_decode_column, huffman_encode_column, kmeans_columns, lis_column, percentile_column,
+    single_linkage_columns,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -1575,6 +1576,145 @@ pub unsafe extern "C" fn geoda_tree_free(tree: *mut GeodaTree) {
         }
         Ok(())
     });
+}
+
+/// Conjuntos de items frecuentes (algoritmo Apriori) de unas transacciones en **formato largo**:
+/// `transaction[i]` contiene a `item[i]` (dos columnas `Int64` del mismo largo, ids `>= 0`, sin
+/// nulos; un item repetido dentro de una transaccion cuenta una vez). `min_support` es un conteo
+/// absoluto de transacciones (al menos 1). Devuelve **tres columnas `Int64` nuevas**:
+///
+/// - `*out_set` y `*out_item`: los conjuntos en formato largo, una fila por item. `set` es el id
+///   del conjunto (desde 0); los ids siguen el orden por tamano y luego lexicografico, y los items
+///   de cada conjunto van de menor a mayor.
+/// - `*out_support`: una fila por conjunto, con las transacciones que lo contienen.
+///
+/// Cada columna debe liberarse con `geoda_column_free`. Si falla, devuelve un codigo negativo y los
+/// tres `out` quedan en NULL: `GEODA_ERR_INVALID_ARGUMENT` si `min_support` es 0, hay nulos o ids
+/// negativos; `GEODA_ERR_LENGTH_MISMATCH` si las columnas miden distinto; `GEODA_ERR_TYPE_MISMATCH`
+/// si no son `Int64`.
+///
+/// # Safety
+/// `transaction` e `item` deben ser handles validos y los tres `out` escribibles y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_apriori_itemsets(
+    transaction: *const GeodaColumn,
+    item: *const GeodaColumn,
+    min_support: usize,
+    out_set: *mut *mut GeodaColumn,
+    out_item: *mut *mut GeodaColumn,
+    out_support: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: los `out` son escribibles si no son NULL (contrato).
+        unsafe { null_outs(&[out_set, out_item, out_support]) }?;
+        // SAFETY: contrato de `column_ref`.
+        let (transaction, item) = unsafe {
+            (
+                column_ref(transaction, "transaction")?,
+                column_ref(item, "item")?,
+            )
+        };
+        let transactions = Transactions::from_columns(transaction, item)?;
+        let frequent = frequent_itemsets(&transactions, min_support)?;
+        let (mut sets, mut items) = (Vec::new(), Vec::new());
+        for (id, itemset) in frequent.itemsets.iter().enumerate() {
+            for &value in itemset {
+                sets.push(to_i64(id)?);
+                items.push(value);
+            }
+        }
+        let support = frequent
+            .support
+            .iter()
+            .map(|&s| to_i64(s))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (sets, items, support) = (
+            int64_column(&sets)?,
+            int64_column(&items)?,
+            int64_column(&support)?,
+        );
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_set = into_handle(sets);
+            *out_item = into_handle(items);
+            *out_support = into_handle(support);
+        }
+        Ok(())
+    })
+}
+
+/// Reglas de asociacion `antecedente -> consecuente` de unas transacciones en formato largo (ver
+/// `geoda_apriori_itemsets`), con soporte `>= min_support` y confianza `>= min_confidence`
+/// (en `(0, 1]`). Devuelve **cinco columnas nuevas**, una fila por regla:
+///
+/// - `*out_antecedent` y `*out_consequent`: `Int64`, el id del conjunto del antecedente y del
+///   consecuente. Son ids de los conjuntos que devuelve `geoda_apriori_itemsets` con el mismo
+///   `min_support` (los dos son siempre frecuentes).
+/// - `*out_support`: `Int64`, transacciones que contienen antecedente y consecuente.
+/// - `*out_confidence`: `Float64`, `soporte(A u C) / soporte(A)`.
+/// - `*out_lift`: `Float64`, `confianza / (soporte(C) / N)` con `N` las transacciones.
+///
+/// Las reglas salen por conjunto frecuente (en el orden de `geoda_apriori_itemsets`) y, dentro de
+/// cada uno, por la mascara de bits del antecedente. Cada columna debe liberarse con
+/// `geoda_column_free`. Si falla, devuelve un codigo negativo y los cinco `out` quedan en NULL: los
+/// mismos errores que `geoda_apriori_itemsets`, y `GEODA_ERR_INVALID_ARGUMENT` si `min_confidence`
+/// no esta en `(0, 1]` o un conjunto frecuente tiene mas de 20 items.
+///
+/// # Safety
+/// `transaction` e `item` deben ser handles validos y los cinco `out` escribibles y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_apriori_rules(
+    transaction: *const GeodaColumn,
+    item: *const GeodaColumn,
+    min_support: usize,
+    min_confidence: f64,
+    out_antecedent: *mut *mut GeodaColumn,
+    out_consequent: *mut *mut GeodaColumn,
+    out_support: *mut *mut GeodaColumn,
+    out_confidence: *mut *mut GeodaColumn,
+    out_lift: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: los `out` son escribibles si no son NULL (contrato).
+        unsafe {
+            null_outs(&[
+                out_antecedent,
+                out_consequent,
+                out_support,
+                out_confidence,
+                out_lift,
+            ])
+        }?;
+        // SAFETY: contrato de `column_ref`.
+        let (transaction, item) = unsafe {
+            (
+                column_ref(transaction, "transaction")?,
+                column_ref(item, "item")?,
+            )
+        };
+        let transactions = Transactions::from_columns(transaction, item)?;
+        let frequent = frequent_itemsets(&transactions, min_support)?;
+        let rules = association_rules(&frequent, min_confidence)?;
+        let ids = |pick: fn(&geoda_algo::Rule) -> usize| -> Result<Vec<i64>, Error> {
+            rules.iter().map(|r| to_i64(pick(r))).collect()
+        };
+        let (antecedent, consequent, support) = (
+            int64_column(&ids(|r| r.antecedent)?)?,
+            int64_column(&ids(|r| r.consequent)?)?,
+            int64_column(&ids(|r| r.support)?)?,
+        );
+        let confidence = float64_column(&rules.iter().map(|r| r.confidence).collect::<Vec<_>>())?;
+        let lift = float64_column(&rules.iter().map(|r| r.lift).collect::<Vec<_>>())?;
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_antecedent = into_handle(antecedent);
+            *out_consequent = into_handle(consequent);
+            *out_support = into_handle(support);
+            *out_confidence = into_handle(confidence);
+            *out_lift = into_handle(lift);
+        }
+        Ok(())
+    })
 }
 
 /// Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle

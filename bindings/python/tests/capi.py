@@ -215,6 +215,14 @@ def _load():
         ),
         "geoda_tree_node_count": ([p_handle], ctypes.c_int64),
         "geoda_tree_free": ([p_handle], None),
+        "geoda_apriori_itemsets": (
+            [p_handle, p_handle, ctypes.c_size_t] + [ctypes.POINTER(p_handle)] * 3,
+            ctypes.c_int32,
+        ),
+        "geoda_apriori_rules": (
+            [p_handle, p_handle, ctypes.c_size_t, ctypes.c_double] + [ctypes.POINTER(p_handle)] * 5,
+            ctypes.c_int32,
+        ),
         "geoda_dendrogram_cut": (
             [p_handle, p_handle, ctypes.c_size_t, ctypes.c_size_t, ctypes.POINTER(p_handle)],
             ctypes.c_int32,
@@ -377,6 +385,26 @@ class Column:
         if code != OK:
             return columns, code, None
         return columns, code, count.value
+
+    def apriori_itemsets(self, item, min_support):
+        """`([set, item, support], 0)` o `([], codigo)`; `self` es `transaction`."""
+        outs = [ctypes.c_void_p(None) for _ in range(3)]
+        code = LIB.geoda_apriori_itemsets(
+            self.handle, item.handle, min_support, *(ctypes.byref(o) for o in outs)
+        )
+        return Column._own(outs, code)
+
+    def apriori_rules(self, item, min_support, min_confidence):
+        """`([antecedent, consequent, support, confidence, lift], 0)` o `([], codigo)`."""
+        outs = [ctypes.c_void_p(None) for _ in range(5)]
+        code = LIB.geoda_apriori_rules(
+            self.handle,
+            item.handle,
+            min_support,
+            min_confidence,
+            *(ctypes.byref(o) for o in outs),
+        )
+        return Column._own(outs, code)
 
     def dendrogram_cut(self, right, n, k):
         """`([labels], 0)` o `([], codigo)`; `self` es `left` y `right` la segunda columna."""

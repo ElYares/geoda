@@ -709,6 +709,59 @@ int64_t geoda_tree_node_count(const struct GeodaTree *tree);
 // `tree` debe ser NULL o un handle devuelto por `geoda_tree_fit` y no liberado aun.
 void geoda_tree_free(struct GeodaTree *tree);
 
+// Conjuntos de items frecuentes (algoritmo Apriori) de unas transacciones en **formato largo**:
+// `transaction[i]` contiene a `item[i]` (dos columnas `Int64` del mismo largo, ids `>= 0`, sin
+// nulos; un item repetido dentro de una transaccion cuenta una vez). `min_support` es un conteo
+// absoluto de transacciones (al menos 1). Devuelve **tres columnas `Int64` nuevas**:
+//
+// - `*out_set` y `*out_item`: los conjuntos en formato largo, una fila por item. `set` es el id
+//   del conjunto (desde 0); los ids siguen el orden por tamano y luego lexicografico, y los items
+//   de cada conjunto van de menor a mayor.
+// - `*out_support`: una fila por conjunto, con las transacciones que lo contienen.
+//
+// Cada columna debe liberarse con `geoda_column_free`. Si falla, devuelve un codigo negativo y los
+// tres `out` quedan en NULL: `GEODA_ERR_INVALID_ARGUMENT` si `min_support` es 0, hay nulos o ids
+// negativos; `GEODA_ERR_LENGTH_MISMATCH` si las columnas miden distinto; `GEODA_ERR_TYPE_MISMATCH`
+// si no son `Int64`.
+//
+// # Safety
+// `transaction` e `item` deben ser handles validos y los tres `out` escribibles y no NULL.
+int32_t geoda_apriori_itemsets(const struct GeodaColumn *transaction,
+                               const struct GeodaColumn *item,
+                               size_t min_support,
+                               struct GeodaColumn **out_set,
+                               struct GeodaColumn **out_item,
+                               struct GeodaColumn **out_support);
+
+// Reglas de asociacion `antecedente -> consecuente` de unas transacciones en formato largo (ver
+// `geoda_apriori_itemsets`), con soporte `>= min_support` y confianza `>= min_confidence`
+// (en `(0, 1]`). Devuelve **cinco columnas nuevas**, una fila por regla:
+//
+// - `*out_antecedent` y `*out_consequent`: `Int64`, el id del conjunto del antecedente y del
+//   consecuente. Son ids de los conjuntos que devuelve `geoda_apriori_itemsets` con el mismo
+//   `min_support` (los dos son siempre frecuentes).
+// - `*out_support`: `Int64`, transacciones que contienen antecedente y consecuente.
+// - `*out_confidence`: `Float64`, `soporte(A u C) / soporte(A)`.
+// - `*out_lift`: `Float64`, `confianza / (soporte(C) / N)` con `N` las transacciones.
+//
+// Las reglas salen por conjunto frecuente (en el orden de `geoda_apriori_itemsets`) y, dentro de
+// cada uno, por la mascara de bits del antecedente. Cada columna debe liberarse con
+// `geoda_column_free`. Si falla, devuelve un codigo negativo y los cinco `out` quedan en NULL: los
+// mismos errores que `geoda_apriori_itemsets`, y `GEODA_ERR_INVALID_ARGUMENT` si `min_confidence`
+// no esta en `(0, 1]` o un conjunto frecuente tiene mas de 20 items.
+//
+// # Safety
+// `transaction` e `item` deben ser handles validos y los cinco `out` escribibles y no NULL.
+int32_t geoda_apriori_rules(const struct GeodaColumn *transaction,
+                            const struct GeodaColumn *item,
+                            size_t min_support,
+                            double min_confidence,
+                            struct GeodaColumn **out_antecedent,
+                            struct GeodaColumn **out_consequent,
+                            struct GeodaColumn **out_support,
+                            struct GeodaColumn **out_confidence,
+                            struct GeodaColumn **out_lift);
+
 // Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 // ya no es valido; liberarlo dos veces es comportamiento indefinido.
 //

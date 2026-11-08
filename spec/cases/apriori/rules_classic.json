@@ -1,0 +1,42 @@
+{
+  "spec_version": 1,
+  "id": "apriori/rules_classic",
+  "description": "seis reglas de confianza 2/3 (ids de conjuntos: 0,1,2 los items y 3,4,5 los pares); la primera es {1}->{2} con lift 8/9",
+  "input": {
+    "dtype": "int64",
+    "values": [0, 0, 0, 1, 1, 2, 2, 3, 3]
+  },
+  "input2": {
+    "dtype": "int64",
+    "values": [1, 2, 3, 1, 2, 1, 3, 2, 3]
+  },
+  "op": "apriori_rules",
+  "args": {
+    "min_support": 2,
+    "min_confidence": 0.6
+  },
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int64",
+        "values": [0, 1, 0, 2, 1, 2]
+      },
+      {
+        "dtype": "int64",
+        "values": [1, 0, 2, 0, 2, 1]
+      },
+      {
+        "dtype": "int64",
+        "values": [2, 2, 2, 2, 2, 2]
+      },
+      {
+        "dtype": "float64",
+        "values": [0.6666666666666666, 0.6666666666666666, 0.6666666666666666, 0.6666666666666666, 0.6666666666666666, 0.6666666666666666]
+      },
+      {
+        "dtype": "float64",
+        "values": [0.8888888888888888, 0.8888888888888888, 0.8888888888888888, 0.8888888888888888, 0.8888888888888888, 0.8888888888888888]
+      }
+    ]
+  }
+}

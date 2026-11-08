@@ -1,0 +1,20 @@
+{
+  "spec_version": 1,
+  "id": "apriori/error_negative_item",
+  "description": "un item negativo es INVALID_ARGUMENT",
+  "input": {
+    "dtype": "int64",
+    "values": [0, 0]
+  },
+  "input2": {
+    "dtype": "int64",
+    "values": [1, -2]
+  },
+  "op": "apriori_itemsets",
+  "args": {
+    "min_support": 1
+  },
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

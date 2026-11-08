@@ -1,0 +1,33 @@
+{
+  "spec_version": 1,
+  "id": "apriori/itemsets_classic",
+  "description": "cuatro transacciones, soporte 2: los 3 items (3 veces) y los 3 pares (2 veces); el trio aparece 1 vez y no entra",
+  "input": {
+    "dtype": "int64",
+    "values": [0, 0, 0, 1, 1, 2, 2, 3, 3]
+  },
+  "input2": {
+    "dtype": "int64",
+    "values": [1, 2, 3, 1, 2, 1, 3, 2, 3]
+  },
+  "op": "apriori_itemsets",
+  "args": {
+    "min_support": 2
+  },
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int64",
+        "values": [0, 1, 2, 3, 3, 4, 4, 5, 5]
+      },
+      {
+        "dtype": "int64",
+        "values": [1, 2, 3, 1, 2, 1, 3, 2, 3]
+      },
+      {
+        "dtype": "int64",
+        "values": [3, 3, 3, 2, 2, 2]
+      }
+    ]
+  }
+}

@@ -16,17 +16,18 @@ use geoda::{
     GEODA_AGG_COUNT, GEODA_AGG_MAX, GEODA_AGG_MEAN, GEODA_AGG_MIN, GEODA_AGG_STD, GEODA_AGG_SUM,
     GEODA_AGG_VAR, GEODA_ERR_ALLOC, GEODA_ERR_FFI, GEODA_ERR_INTERNAL, GEODA_ERR_INVALID_ARGUMENT,
     GEODA_ERR_LENGTH_MISMATCH, GEODA_ERR_OUT_OF_BOUNDS, GEODA_ERR_PANIC, GEODA_ERR_TYPE_MISMATCH,
-    GEODA_ERR_UNSUPPORTED, GEODA_OK, GeodaColumn, GeodaGraph, GeodaTree, geoda_column_corr,
-    geoda_column_count, geoda_column_dedupe, geoda_column_edit_distance, geoda_column_free,
-    geoda_column_from_arrow, geoda_column_group_by, geoda_column_histogram, geoda_column_len,
-    geoda_column_lis, geoda_column_max_f64, geoda_column_max_i64, geoda_column_mean,
-    geoda_column_median, geoda_column_min_f64, geoda_column_min_i64, geoda_column_null_count,
-    geoda_column_percentile, geoda_column_slice, geoda_column_std, geoda_column_sum_f64,
-    geoda_column_sum_i64, geoda_column_to_arrow, geoda_column_var, geoda_dendrogram_cut,
-    geoda_graph_bfs, geoda_graph_components, geoda_graph_dijkstra, geoda_graph_free,
-    geoda_graph_mst, geoda_graph_new, geoda_graph_topological_order, geoda_hierarchical,
-    geoda_huffman_decode, geoda_huffman_encode, geoda_kmeans, geoda_last_error_message,
-    geoda_tree_fit, geoda_tree_free, geoda_tree_node_count, geoda_tree_predict,
+    GEODA_ERR_UNSUPPORTED, GEODA_OK, GeodaColumn, GeodaGraph, GeodaTree, geoda_apriori_itemsets,
+    geoda_apriori_rules, geoda_column_corr, geoda_column_count, geoda_column_dedupe,
+    geoda_column_edit_distance, geoda_column_free, geoda_column_from_arrow, geoda_column_group_by,
+    geoda_column_histogram, geoda_column_len, geoda_column_lis, geoda_column_max_f64,
+    geoda_column_max_i64, geoda_column_mean, geoda_column_median, geoda_column_min_f64,
+    geoda_column_min_i64, geoda_column_null_count, geoda_column_percentile, geoda_column_slice,
+    geoda_column_std, geoda_column_sum_f64, geoda_column_sum_i64, geoda_column_to_arrow,
+    geoda_column_var, geoda_dendrogram_cut, geoda_graph_bfs, geoda_graph_components,
+    geoda_graph_dijkstra, geoda_graph_free, geoda_graph_mst, geoda_graph_new,
+    geoda_graph_topological_order, geoda_hierarchical, geoda_huffman_decode, geoda_huffman_encode,
+    geoda_kmeans, geoda_last_error_message, geoda_tree_fit, geoda_tree_free, geoda_tree_node_count,
+    geoda_tree_predict,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -464,6 +465,7 @@ fn run_op(op: &str, case: &Value, handle: Handle) -> Result<OpResult, String> {
         }
         "histogram" => run_histogram(case, &handle),
         "edit_distance" | "huffman_decode" | "dendrogram_cut" => run_pair(op, case, &handle),
+        "apriori_itemsets" | "apriori_rules" => run_apriori(op, case, &handle),
         "dedupe" => {
             let (mut out, mut count) = (ptr::null_mut::<GeodaColumn>(), -1_i64);
             // SAFETY: handle valido y los `out` son escribibles.
@@ -541,6 +543,46 @@ fn run_pair(op: &str, case: &Value, handle: &Handle) -> Result<OpResult, String>
         }
     };
     collect_outs(code, &[out])
+}
+
+/// Apriori: `input` es `transaction` e `input2` es `item` (formato largo); `args.min_support` y, en
+/// las reglas, `args.min_confidence`.
+fn run_apriori(op: &str, case: &Value, handle: &Handle) -> Result<OpResult, String> {
+    let item = match import_through_capi(case.get("input2").ok_or("input2 falta")?)? {
+        Ok(item) => item,
+        Err(code) => return Ok(Err(code)),
+    };
+    let min_support = usize_arg(case, "min_support")?;
+    let mut outs = [ptr::null_mut::<GeodaColumn>(); 5];
+    if op == "apriori_itemsets" {
+        let [set, items, support, ..] = &mut outs;
+        // SAFETY: handles validos y los `out` son escribibles.
+        let code =
+            unsafe { geoda_apriori_itemsets(handle.0, item.0, min_support, set, items, support) };
+        collect_outs(code, &outs[..3])
+    } else {
+        let min_confidence = parse_f64(
+            case["args"]
+                .get("min_confidence")
+                .ok_or("args.min_confidence falta")?,
+        )?;
+        let [antecedent, consequent, support, confidence, lift] = &mut outs;
+        // SAFETY: handles validos y los `out` son escribibles.
+        let code = unsafe {
+            geoda_apriori_rules(
+                handle.0,
+                item.0,
+                min_support,
+                min_confidence,
+                antecedent,
+                consequent,
+                support,
+                confidence,
+                lift,
+            )
+        };
+        collect_outs(code, &outs)
+    }
 }
 
 /// Operaciones sobre una matriz: `case.inputs` es la lista de columnas (una por variable) y se
