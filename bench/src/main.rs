@@ -13,15 +13,15 @@
 //! cargo run --release -p geoda-bench -- file 250000000    # archivo de 2 GB leido por trozos
 //! cargo run --release -p geoda-bench -- graph              # BFS y DFS de 1M nodos y 10M aristas
 //! cargo run --release -p geoda-bench -- graph 1000000 10000000   # incluye Dijkstra
-//! cargo run --release -p geoda-bench -- text              # edicion de 20 000 caracteres y LIS de 1M
+//! cargo run --release -p geoda-bench -- text              # edicion de 20 000 caracteres, LIS y Huffman de 1M
 //! ```
 
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use geoda_algo::{
-    Graph, WeightedGraph, bfs, dfs, dijkstra, edit_distance, lis, median_of_medians, merge_sort,
-    quickselect,
+    Graph, Huffman, WeightedGraph, bfs, dfs, dijkstra, edit_distance, lis, median_of_medians,
+    merge_sort, quickselect,
 };
 use geoda_core::file::{ColumnFileReader, ColumnFileWriter};
 use geoda_core::{Column, DataType, PrimitiveBuilder};
@@ -342,6 +342,30 @@ fn bench_text(len: usize) {
     println!(
         "LIS de {n} enteros aleatorios: longitud {} en {} ms",
         result.length,
+        ms(started.elapsed())
+    );
+
+    // Huffman sobre 10 MB de letras (26 simbolos, frecuencias casi parejas).
+    let text = random_text(&mut rng, 10_000_000).into_bytes();
+    let started = Instant::now();
+    let huffman = Huffman::from_data(black_box(&text)).expect("codigo valido");
+    let encoded = huffman
+        .encode(black_box(&text))
+        .expect("todos tienen codigo");
+    let encode_time = started.elapsed();
+    let started = Instant::now();
+    let decoded = huffman
+        .decode(&encoded.bytes, encoded.bit_len)
+        .expect("bits validos");
+    assert_eq!(decoded, text);
+    println!(
+        "Huffman de {} bytes: {} bits ({:.1}% del original); codifica en {} ms, decodifica en {} ms",
+        text.len(),
+        encoded.bit_len,
+        f64::from(u32::try_from(encoded.bit_len / 1000).expect("cabe"))
+            / f64::from(u32::try_from(text.len() * 8 / 1000).expect("cabe"))
+            * 100.0,
+        ms(encode_time),
         ms(started.elapsed())
     );
 }
