@@ -1,4 +1,4 @@
-//! Algoritmos base de geoda (fases 1, 4, 5 y 6). Todo en Rust seguro: ningun `unsafe`.
+//! Algoritmos base de geoda (fases 1, 4, 5, 6 y 7). Todo en Rust seguro: ningun `unsafe`.
 //!
 //! Los algoritmos se escriben a mano (el proyecto es «desde cero»); la biblioteca
 //! estandar solo se usa como oraculo en los tests.
@@ -16,6 +16,7 @@ pub mod hierarchical;
 pub mod huffman;
 pub mod kmeans;
 pub mod lis;
+pub mod mat;
 pub mod matrix;
 pub mod network;
 pub mod percentile;
@@ -43,6 +44,7 @@ pub use hierarchical::{
 pub use huffman::{Code, Encoded, Huffman, frequencies};
 pub use kmeans::{KMeans, KMeansParams, kmeans, kmeans_columns};
 pub use lis::{Lis, lis};
+pub use mat::Matrix;
 pub use matrix::{Dataset, Rng, squared_distance};
 pub use network::Network;
 pub use percentile::{median_column, percentile_column, percentiles_column};

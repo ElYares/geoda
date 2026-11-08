@@ -14,6 +14,7 @@
 //! cargo run --release -p geoda-bench -- graph              # BFS y DFS de 1M nodos y 10M aristas
 //! cargo run --release -p geoda-bench -- graph 1000000 10000000   # incluye Dijkstra
 //! cargo run --release -p geoda-bench -- mining            # k-means, jerarquico, arbol y Apriori
+//! cargo run --release -p geoda-bench -- linalg            # producto, LU, QR, SVD, regresion y PCA
 //! cargo run --release -p geoda-bench -- text              # edicion de 20 000 caracteres, LIS, Huffman y dedupe
 //! ```
 
@@ -21,7 +22,7 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use geoda_algo::{
-    Dataset, Graph, Huffman, KMeansParams, Transactions, TreeParams, WeightedGraph,
+    Dataset, Graph, Huffman, KMeansParams, Matrix, Transactions, TreeParams, WeightedGraph,
     association_rules, bfs, dedupe_similar, dfs, dijkstra, edit_distance, fit_tree,
     frequent_itemsets, kmeans, lis, median_of_medians, merge_sort, quickselect, single_linkage,
 };
@@ -524,11 +525,41 @@ fn bench_mining() {
     }
 }
 
+/// Matriz de `rows x cols` con valores en `[-1, 1)` de la semilla fija.
+fn random_matrix(rng: &mut Rng, rows: usize, cols: usize) -> Matrix {
+    Matrix::from_flat(
+        rows,
+        cols,
+        (0..rows * cols).map(|_| unit(rng) * 2.0 - 1.0).collect(),
+    )
+    .expect("matriz")
+}
+
+/// Algebra lineal: producto de matrices de 500 x 500.
+fn bench_linalg() {
+    let mut rng = Rng(SEED);
+    let (a, b) = (
+        random_matrix(&mut rng, 500, 500),
+        random_matrix(&mut rng, 500, 500),
+    );
+    let started = Instant::now();
+    let product = black_box(&a).matmul(black_box(&b)).expect("producto");
+    println!(
+        "\nproducto de dos matrices de 500 x 500: {} ms (c[0][0] = {:.4})",
+        ms(started.elapsed()),
+        product.get(0, 0)
+    );
+}
+
 fn ms(d: Duration) -> String {
     format!("{:.2}", d.as_secs_f64() * 1000.0)
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("linalg") {
+        bench_linalg();
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("mining") {
         bench_mining();
         return;
