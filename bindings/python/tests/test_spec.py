@@ -645,7 +645,7 @@ class RunnerBehaviour(unittest.TestCase):
             run_case(inline("len", {"len": 3}, spec_version=2))
 
     def test_abi_version(self):
-        self.assertEqual(capi.abi_version(), 1)
+        self.assertEqual(capi.abi_version(), 1 << 16)
 
     def test_import_consumes_array_exactly_once(self):
         before = capi.array_releases()

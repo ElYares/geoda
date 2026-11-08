@@ -38,6 +38,8 @@ jobs:
       - if: steps.cbindgen.outputs.cache-hit != 'true'
         run: cargo install cbindgen --version 0.29.4 --locked
       - run: tests/c/run.sh
+      - name: ABI congelada (lista de simbolos y version)
+        run: abi/check.sh
 
   python:
     # El binding (PyO3 + maturin), el runner de spec por ctypes y el interop con

@@ -1,7 +1,7 @@
 # geoda
 
 Librería de análisis, ciencia y minería de datos escrita desde cero y pensada para escalar.
-Un solo núcleo en Rust con una frontera C estable (`capi`) y bindings para Python, Java, C++, Node y WASM.
+Un solo núcleo en Rust con una frontera C estable (`capi`, **ABI 1.0 congelada**: [`docs/abi.md`](docs/abi.md)) y bindings para Python, Java, C++, Node y WASM.
 
 > Estado: fase 0 (cimientos). Aún sin código.
 

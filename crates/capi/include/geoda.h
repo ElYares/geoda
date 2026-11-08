@@ -128,8 +128,8 @@ typedef struct GeodaTree GeodaTree;
 extern "C" {
 #endif // __cplusplus
 
-// Version de la ABI como `major << 16 | minor`. Mientras la ABI no se congele
-// (fase 8) cualquier cambio puede romperla, incluso con el mismo `major`.
+// Version de la ABI como `major << 16 | minor`. Desde la 1.0 esta congelada: añadir funciones sube
+// el menor; quitar una o cambiar una firma sube el mayor (ver `docs/abi.md` y `abi/check.sh`).
 uint32_t geoda_abi_version(void);
 
 // Mensaje del ultimo error de **este hilo**, como texto UTF-8 terminado en cero.

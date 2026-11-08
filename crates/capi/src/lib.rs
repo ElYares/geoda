@@ -39,9 +39,9 @@ pub use error::{
 };
 
 /// Version mayor de la ABI.
-const ABI_MAJOR: u32 = 0;
+const ABI_MAJOR: u32 = 1;
 /// Version menor de la ABI.
-const ABI_MINOR: u32 = 1;
+const ABI_MINOR: u32 = 0;
 
 /// Agregado de `geoda_column_group_by`: valores no nulos.
 pub const GEODA_AGG_COUNT: i32 = 0;
@@ -171,8 +171,8 @@ fn to_i64(n: usize) -> Result<i64, Error> {
     i64::try_from(n).map_err(|_| Error::OutOfBounds(format!("{n} no cabe en i64")))
 }
 
-/// Version de la ABI como `major << 16 | minor`. Mientras la ABI no se congele
-/// (fase 8) cualquier cambio puede romperla, incluso con el mismo `major`.
+/// Version de la ABI como `major << 16 | minor`. Desde la 1.0 esta congelada: añadir funciones sube
+/// el menor; quitar una o cambiar una firma sube el mayor (ver `docs/abi.md` y `abi/check.sh`).
 #[unsafe(no_mangle)]
 pub extern "C" fn geoda_abi_version() -> u32 {
     (ABI_MAJOR << 16) | ABI_MINOR
@@ -2889,7 +2889,7 @@ mod tests {
 
     #[test]
     fn version_de_abi() {
-        assert_eq!(geoda_abi_version(), 1);
+        assert_eq!(geoda_abi_version(), 1 << 16);
     }
 
     #[test]

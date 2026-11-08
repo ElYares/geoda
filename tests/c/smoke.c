@@ -559,7 +559,7 @@ static void prueba_grafo(void) {
 
 int main(void) {
     /* Version de la ABI: major 0, minor 1. */
-    CHECK(geoda_abi_version() == ((0u << 16) | 1u));
+    CHECK(geoda_abi_version() == ((1u << 16) | 0u));
 
     /* Sin errores previos el mensaje es una cadena vacia, no NULL. */
     CHECK(geoda_last_error_message() != NULL);
