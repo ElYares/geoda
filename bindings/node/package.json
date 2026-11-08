@@ -1,0 +1,25 @@
+{
+  "name": "geoda",
+  "version": "0.0.0",
+  "description": "Analisis, ciencia y mineria de datos con nucleo en Rust (binding de Node sobre la C-API, ABI 1.x)",
+  "license": "MIT OR Apache-2.0",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "binding.gyp",
+    "src/addon.c",
+    "src/geoda.h",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "test": "node --expose-gc --test \"test/*.test.js\"",
+    "prepack": "cp ../../crates/capi/include/geoda.h src/geoda.h",
+    "postpack": "rm -f src/geoda.h"
+  }
+}

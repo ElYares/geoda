@@ -72,6 +72,25 @@ jobs:
       - run: cargo build -p geoda-capi
       - run: bindings/java/test.sh
 
+  node:
+    # El addon N-API (C) y su capa de JavaScript, con el subconjunto de spec/ que soporta.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: cargo build -p geoda-capi
+      - name: addon
+        working-directory: bindings/node
+        env:
+          GEODA_LIB_DIR: ${{ github.workspace }}/target/debug
+        run: npx --yes node-gyp rebuild
+      - name: pruebas
+        working-directory: bindings/node
+        run: npm test
+
   python:
     # El binding (PyO3 + maturin), el runner de spec por ctypes y el interop con
     # pyarrow. Falla si algun test de pyarrow se salta: aqui debe correr.
