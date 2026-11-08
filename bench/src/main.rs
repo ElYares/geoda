@@ -24,7 +24,8 @@ use std::time::{Duration, Instant};
 use geoda_algo::{
     Dataset, Graph, Huffman, KMeansParams, Matrix, Transactions, TreeParams, WeightedGraph,
     association_rules, bfs, dedupe_similar, dfs, dijkstra, edit_distance, fit_tree,
-    frequent_itemsets, kmeans, lis, lu, median_of_medians, merge_sort, quickselect, single_linkage,
+    frequent_itemsets, kmeans, least_squares, lis, lu, median_of_medians, merge_sort, quickselect,
+    single_linkage,
 };
 use geoda_core::file::{ColumnFileReader, ColumnFileWriter};
 use geoda_core::{Column, DataType, PrimitiveBuilder};
@@ -566,6 +567,17 @@ fn bench_linalg() {
     println!(
         "LU de 500 x 500: factoriza en {} ms, resuelve con residuo maximo {residual:.2e}",
         ms(factored)
+    );
+
+    // Minimos cuadrados por QR: 10 000 filas x 20 variables.
+    let tall = random_matrix(&mut rng, 10_000, 20);
+    let target: Vec<f64> = (0..10_000).map(|_| unit(&mut rng)).collect();
+    let started = Instant::now();
+    let fit = least_squares(black_box(&tall), black_box(&target)).expect("rango completo");
+    println!(
+        "minimos cuadrados por QR de 10000 x 20: {} ms, norma del residuo {:.3}",
+        ms(started.elapsed()),
+        fit.residual_norm
     );
 }
 
