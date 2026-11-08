@@ -817,6 +817,62 @@ int32_t geoda_det(const struct GeodaColumn *const *a, size_t n_a, double *out);
 // `a` debe apuntar a `n_a` handles validos y `out` ser escribible y no NULL.
 int32_t geoda_inverse(const struct GeodaColumn *const *a, size_t n_a, struct GeodaColumn **out);
 
+// Factorizacion QR delgada `A = Q R` por reflexiones de Householder. `a` es una matriz de `m x n`
+// (`n_a = n` columnas de `m` filas, con `m >= n`). Devuelve **dos columnas `Float64` nuevas**, planas
+// y por filas:
+//
+// - `*out_q`: `m * n` valores (columnas ortonormales).
+// - `*out_r`: `n * n` valores (triangular superior).
+//
+// Si falla, devuelve un codigo negativo y los dos `out` quedan en NULL: `GEODA_ERR_INVALID_ARGUMENT`
+// si la lista es NULL o vacia, hay nulos o no finitos, o `m < n`; `GEODA_ERR_LENGTH_MISMATCH` si las
+// columnas miden distinto.
+//
+// # Safety
+// `a` debe apuntar a `n_a` handles validos y los dos `out` deben ser escribibles y no NULL.
+int32_t geoda_qr(const struct GeodaColumn *const *a,
+                 size_t n_a,
+                 struct GeodaColumn **out_q,
+                 struct GeodaColumn **out_r);
+
+// SVD delgada `A = U S V^T` (Jacobi unilateral) de una matriz de `m x n` (`n_a = n` columnas de `m`
+// filas). Con `k = min(m, n)` devuelve **tres columnas `Float64` nuevas**:
+//
+// - `*out_u`: `m * k` valores por filas (columnas ortonormales).
+// - `*out_s`: los `k` valores singulares, de mayor a menor.
+// - `*out_vt`: `k * n` valores por filas (filas ortonormales).
+//
+// El signo es determinista: en cada columna de `V` la entrada de mayor valor absoluto es positiva.
+// Si falla, devuelve un codigo negativo y los tres `out` quedan en NULL: `GEODA_ERR_INVALID_ARGUMENT`
+// si la lista es NULL o vacia, hay nulos o no finitos, o la SVD no converge;
+// `GEODA_ERR_LENGTH_MISMATCH` si las columnas miden distinto.
+//
+// # Safety
+// `a` debe apuntar a `n_a` handles validos y los tres `out` deben ser escribibles y no NULL.
+int32_t geoda_svd(const struct GeodaColumn *const *a,
+                  size_t n_a,
+                  struct GeodaColumn **out_u,
+                  struct GeodaColumn **out_s,
+                  struct GeodaColumn **out_vt);
+
+// Minimos cuadrados `min |A x - b|` por QR de Householder. `a` es una matriz de `m x n` (`n_a = n`
+// columnas, `m >= n`) de rango completo y `b` una columna de `m` valores. Devuelve una columna
+// `Float64` nueva por `*out_x` con los `n` coeficientes y escribe en `*out_residual` la norma
+// euclidiana de `A x - b`.
+//
+// Si falla, devuelve un codigo negativo, `*out_x` queda en NULL y `*out_residual` no se escribe:
+// `GEODA_ERR_INVALID_ARGUMENT` si `m < n`, las columnas son dependientes (`rango incompleto`) o hay
+// nulos o no finitos; `GEODA_ERR_LENGTH_MISMATCH` si `b` mide distinto que las filas de `A`.
+//
+// # Safety
+// `a` debe apuntar a `n_a` handles validos, `b` ser un handle valido y `out_x` y `out_residual`
+// escribibles y no NULL.
+int32_t geoda_lstsq(const struct GeodaColumn *const *a,
+                    size_t n_a,
+                    const struct GeodaColumn *b,
+                    struct GeodaColumn **out_x,
+                    double *out_residual);
+
 // Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 // ya no es valido; liberarlo dos veces es comportamiento indefinido.
 //

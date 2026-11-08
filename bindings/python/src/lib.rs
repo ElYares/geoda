@@ -3,7 +3,7 @@
 //! y `group_aggregate` (la base de `geoda.group_by`), la clase `Graph` (fase 4) y el texto de la fase 5 (`edit_distance`, `dedupe`, `lis`,
 //! `huffman_encode` y `huffman_decode`), el clustering de la fase 6 (`kmeans`,
 //! `hierarchical` y `cut_tree`) el arbol de decision (`DecisionTree`) y las reglas de asociacion (`frequent_itemsets` y
-//! `association_rules`) y el algebra lineal de la fase 7 (`matmul`, `solve`, `det` e `inv`).
+//! `association_rules`) y el algebra lineal de la fase 7 (`matmul`, `solve`, `det`, `inv`, `qr`, `svd` y `lstsq`).
 //!
 //! Todas las funciones numericas aceptan una lista o cualquier objeto con el protocolo Arrow
 //! `PyCapsule` (`__arrow_c_array__`): `pyarrow`, `polars`, `pandas` con Arrow... (S10). Los
@@ -28,7 +28,7 @@ use geoda_algo::{
 };
 use geoda_algo::{
     Matrix, association_rules as rules_of, det as det_of, frequent_itemsets as itemsets_of,
-    inverse as inverse_of, solve as solve_of,
+    inverse as inverse_of, least_squares, qr as qr_of, solve as solve_of, svd as svd_of,
 };
 use geoda_core::interop::arrow_c::{ArrowArray, ArrowSchema, import_column};
 use geoda_core::{Column, DataType, Error, PrimitiveBuilder, Utf8Builder};
@@ -772,6 +772,56 @@ fn inv(a: Vec<Vec<f64>>) -> PyResult<Vec<Vec<f64>>> {
         .to_rows())
 }
 
+/// Factorizacion QR delgada `a = q r` (Householder). `a` es una lista de filas con al menos tantas
+/// filas como columnas. Devuelve `{"q": filas, "r": filas}`: `q` de `m x n` con columnas ortonormales
+/// y `r` de `n x n` triangular superior.
+///
+/// # Errors
+/// `ValueError` si `a` tiene menos filas que columnas o valores no finitos.
+#[pyfunction]
+// PyO3 extrae las listas de Python por valor; no hay forma de recibirlas por referencia.
+#[allow(clippy::needless_pass_by_value)]
+fn qr(py: Python<'_>, a: Vec<Vec<f64>>) -> PyResult<Bound<'_, PyDict>> {
+    let factors = qr_of(&matrix_of_rows(&a)?).map_err(|e| value_error(&e))?;
+    let out = PyDict::new(py);
+    out.set_item("q", factors.q.to_rows())?;
+    out.set_item("r", factors.r.to_rows())?;
+    Ok(out)
+}
+
+/// SVD delgada `a = u diag(s) vt` por Jacobi unilateral. Devuelve `{"u": filas, "s": [float],
+/// "vt": filas}` con `k = min(filas, columnas)`: `u` de `m x k`, `s` de mayor a menor y `vt` de
+/// `k x n`. El signo es determinista (la mayor entrada de cada columna de `V` es positiva).
+///
+/// # Errors
+/// `ValueError` si hay valores no finitos o la SVD no converge.
+#[pyfunction]
+// PyO3 extrae las listas de Python por valor; no hay forma de recibirlas por referencia.
+#[allow(clippy::needless_pass_by_value)]
+fn svd(py: Python<'_>, a: Vec<Vec<f64>>) -> PyResult<Bound<'_, PyDict>> {
+    let decomposition = svd_of(&matrix_of_rows(&a)?).map_err(|e| value_error(&e))?;
+    let out = PyDict::new(py);
+    out.set_item("u", decomposition.u.to_rows())?;
+    out.set_item("s", decomposition.s)?;
+    out.set_item("vt", decomposition.vt.to_rows())?;
+    Ok(out)
+}
+
+/// Minimos cuadrados: el `x` que minimiza `|a x - b|` (QR de Householder). `a` es una lista de filas
+/// de rango completo con al menos tantas filas como columnas y `b` una lista de numeros.
+///
+/// # Errors
+/// `ValueError` si `a` tiene menos filas que columnas, columnas dependientes (`rango incompleto`),
+/// `b` mide distinto o hay valores no finitos.
+#[pyfunction]
+// PyO3 extrae las listas de Python por valor; no hay forma de recibirlas por referencia.
+#[allow(clippy::needless_pass_by_value)]
+fn lstsq(a: Vec<Vec<f64>>, b: Vec<f64>) -> PyResult<Vec<f64>> {
+    Ok(least_squares(&matrix_of_rows(&a)?, &b)
+        .map_err(|e| value_error(&e))?
+        .coefficients)
+}
+
 /// Subsecuencia estrictamente creciente mas larga (LIS) de una lista de numeros o una columna
 /// Arrow numerica. Devuelve `{"length": int, "indices": [int]}` con las posiciones de sus
 /// elementos, de menor a mayor.
@@ -982,6 +1032,9 @@ fn _geoda(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(solve, m)?)?;
     m.add_function(wrap_pyfunction!(det, m)?)?;
     m.add_function(wrap_pyfunction!(inv, m)?)?;
+    m.add_function(wrap_pyfunction!(qr, m)?)?;
+    m.add_function(wrap_pyfunction!(svd, m)?)?;
+    m.add_function(wrap_pyfunction!(lstsq, m)?)?;
     m.add_function(wrap_pyfunction!(frequent_itemsets, m)?)?;
     m.add_function(wrap_pyfunction!(association_rules, m)?)?;
     m.add_function(wrap_pyfunction!(huffman_encode, m)?)?;

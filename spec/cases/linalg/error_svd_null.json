@@ -1,0 +1,15 @@
+{
+  "spec_version": 1,
+  "id": "linalg/error_svd_null",
+  "description": "un nulo en la matriz es INVALID_ARGUMENT",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, null]
+    }
+  ],
+  "op": "svd",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

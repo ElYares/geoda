@@ -1,0 +1,27 @@
+{
+  "spec_version": 1,
+  "id": "linalg/error_lstsq_wide",
+  "description": "menos filas que columnas: INVALID_ARGUMENT",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [2.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [3.0]
+    }
+  ],
+  "input": {
+    "dtype": "float64",
+    "values": [1.0]
+  },
+  "op": "lstsq",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

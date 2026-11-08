@@ -320,6 +320,59 @@ static void prueba_algebra(void) {
     geoda_column_free(sing1);
 }
 
+/* QR, SVD y minimos cuadrados; los errores dejan los `out` en NULL. */
+static void prueba_factorizaciones(void) {
+    /* A (3x2) = [[1,0],[0,2],[0,0]] como columnas (1,0,0) y (0,2,0); b = (1,3,5). */
+    const double c0[] = {1.0, 0.0, 0.0}, c1[] = {0.0, 2.0, 0.0}, rhs[] = {1.0, 2.0, 0.0};
+    struct GeodaColumn *col0 = columna_plana("g", c0, 3), *col1 = columna_plana("g", c1, 3);
+    struct GeodaColumn *b = columna_plana("g", rhs, 3);
+    const struct GeodaColumn *a[] = {col0, col1};
+    struct GeodaColumn *q = (struct GeodaColumn *)1, *r = (struct GeodaColumn *)1;
+    CHECK(geoda_qr(a, 2, &q, &r) == GEODA_OK);
+    CHECK(geoda_column_len(q) == 6 && geoda_column_len(r) == 4);
+    geoda_column_free(q);
+    geoda_column_free(r);
+    struct GeodaColumn *u = (struct GeodaColumn *)1, *s = (struct GeodaColumn *)1;
+    struct GeodaColumn *vt = (struct GeodaColumn *)1;
+    CHECK(geoda_svd(a, 2, &u, &s, &vt) == GEODA_OK);
+    CHECK(geoda_column_len(u) == 6 && geoda_column_len(s) == 2 && geoda_column_len(vt) == 4);
+    geoda_column_free(u);
+    geoda_column_free(s);
+    geoda_column_free(vt);
+    struct GeodaColumn *x = (struct GeodaColumn *)1;
+    double residuo = -1.0;
+    CHECK(geoda_lstsq(a, 2, b, &x, &residuo) == GEODA_OK && geoda_column_len(x) == 2);
+    CHECK(residuo >= 0.0);
+    geoda_column_free(x);
+
+    /* Una matriz ancha (1 fila, 2 columnas) no tiene QR ni minimos cuadrados. */
+    const double w0[] = {1.0}, w1[] = {2.0}, wb[] = {1.0};
+    struct GeodaColumn *wide0 = columna_plana("g", w0, 1), *wide1 = columna_plana("g", w1, 1);
+    struct GeodaColumn *wb_col = columna_plana("g", wb, 1);
+    const struct GeodaColumn *wide[] = {wide0, wide1};
+    q = r = (struct GeodaColumn *)1;
+    CHECK(geoda_qr(wide, 2, &q, &r) == GEODA_ERR_INVALID_ARGUMENT && q == NULL && r == NULL);
+    x = (struct GeodaColumn *)1;
+    residuo = -1.0;
+    CHECK(geoda_lstsq(wide, 2, wb_col, &x, &residuo) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(x == NULL && residuo == -1.0);
+    /* La SVD si acepta la matriz ancha (forma delgada, k = 1). */
+    CHECK(geoda_svd(wide, 2, &u, &s, &vt) == GEODA_OK && geoda_column_len(s) == 1);
+    geoda_column_free(u);
+    geoda_column_free(s);
+    geoda_column_free(vt);
+    u = s = vt = (struct GeodaColumn *)1;
+    CHECK(geoda_svd(NULL, 2, &u, &s, &vt) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(u == NULL && s == NULL && vt == NULL);
+    CHECK(geoda_lstsq(a, 2, b, &x, NULL) == GEODA_ERR_INVALID_ARGUMENT);
+    geoda_column_free(col0);
+    geoda_column_free(col1);
+    geoda_column_free(b);
+    geoda_column_free(wide0);
+    geoda_column_free(wide1);
+    geoda_column_free(wb_col);
+}
+
 /* Grafos: se crea uno con pesos, se consulta y se libera; los errores dejan los `out` en NULL. */
 static void prueba_grafo(void) {
     /* 0 -> 1 (4), 0 -> 2 (1), 2 -> 1 (2), 1 -> 3 (1); el nodo 4 queda aislado. */
@@ -574,6 +627,7 @@ int main(void) {
     prueba_arbol();
     prueba_apriori();
     prueba_algebra();
+    prueba_factorizaciones();
 
     if (fallos == 0) {
         puts("smoke: ok");

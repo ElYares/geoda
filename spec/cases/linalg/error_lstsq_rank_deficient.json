@@ -1,0 +1,23 @@
+{
+  "spec_version": 1,
+  "id": "linalg/error_lstsq_rank_deficient",
+  "description": "columnas dependientes: INVALID_ARGUMENT (rango incompleto)",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0, 3.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [2.0, 4.0, 6.0]
+    }
+  ],
+  "input": {
+    "dtype": "float64",
+    "values": [1.0, 2.0, 3.0]
+  },
+  "op": "lstsq",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

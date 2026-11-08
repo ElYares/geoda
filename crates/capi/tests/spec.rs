@@ -26,8 +26,9 @@ use geoda::{
     geoda_column_var, geoda_dendrogram_cut, geoda_det, geoda_graph_bfs, geoda_graph_components,
     geoda_graph_dijkstra, geoda_graph_free, geoda_graph_mst, geoda_graph_new,
     geoda_graph_topological_order, geoda_hierarchical, geoda_huffman_decode, geoda_huffman_encode,
-    geoda_inverse, geoda_kmeans, geoda_last_error_message, geoda_lu_solve, geoda_matmul,
-    geoda_tree_fit, geoda_tree_free, geoda_tree_node_count, geoda_tree_predict,
+    geoda_inverse, geoda_kmeans, geoda_last_error_message, geoda_lstsq, geoda_lu_solve,
+    geoda_matmul, geoda_qr, geoda_svd, geoda_tree_fit, geoda_tree_free, geoda_tree_node_count,
+    geoda_tree_predict,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -677,7 +678,9 @@ fn run_matrix_op(op: &str, case: &Value, inputs: &Value) -> Result<OpResult, Str
             collect_with_extras(code, &outs, Vec::new())
         }
         "tree_fit_predict" => run_tree(case, &pointers),
-        "matmul" | "lu_solve" | "det" | "inverse" => run_linalg(op, case, &pointers),
+        "matmul" | "lu_solve" | "det" | "inverse" | "qr" | "svd" | "lstsq" => {
+            run_linalg(op, case, &pointers)
+        }
         otro => Err(format!("op de matriz desconocida: {otro:?}")),
     }
 }
@@ -714,6 +717,35 @@ fn run_linalg(op: &str, case: &Value, a: &[*const GeodaColumn]) -> Result<OpResu
             // SAFETY: handles validos, arreglo de punteros y `out` escribible.
             let code = unsafe { geoda_lu_solve(a.as_ptr(), a.len(), b.0, &raw mut out) };
             collect_outs(code, &[out])
+        }
+        "qr" => {
+            let mut outs = [ptr::null_mut::<GeodaColumn>(); 2];
+            let [q, r] = &mut outs;
+            // SAFETY: handles validos, arreglo de punteros y `out` escribibles.
+            let code = unsafe { geoda_qr(a.as_ptr(), a.len(), q, r) };
+            collect_outs(code, &outs)
+        }
+        "svd" => {
+            let mut outs = [ptr::null_mut::<GeodaColumn>(); 3];
+            let [u, s, vt] = &mut outs;
+            // SAFETY: handles validos, arreglo de punteros y `out` escribibles.
+            let code = unsafe { geoda_svd(a.as_ptr(), a.len(), u, s, vt) };
+            collect_outs(code, &outs)
+        }
+        "lstsq" => {
+            let b = match import_through_capi(case.get("input").ok_or("input falta")?)? {
+                Ok(handle) => handle,
+                Err(code) => return Ok(Err(code)),
+            };
+            let mut residual = f64::NAN;
+            // SAFETY: handles validos, arreglo de punteros y `out` escribibles.
+            let code =
+                unsafe { geoda_lstsq(a.as_ptr(), a.len(), b.0, &raw mut out, &raw mut residual) };
+            collect_with_extras(
+                code,
+                &[out],
+                vec![("residual_norm", Extra::Float(residual))],
+            )
         }
         "det" => {
             let mut value = f64::NAN;

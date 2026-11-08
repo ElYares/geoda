@@ -1,0 +1,10 @@
+{
+  "spec_version": 1,
+  "id": "linalg/error_svd_no_columns",
+  "description": "una lista vacia de columnas es INVALID_ARGUMENT",
+  "inputs": [],
+  "op": "svd",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

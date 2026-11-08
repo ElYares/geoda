@@ -1,0 +1,23 @@
+{
+  "spec_version": 1,
+  "id": "linalg/error_qr_wide",
+  "description": "QR pide al menos tantas filas como columnas: una matriz de 2x3 es INVALID_ARGUMENT",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [3.0, 4.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [5.0, 6.0]
+    }
+  ],
+  "op": "qr",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "spec_version": 1,
+  "id": "linalg/lstsq_noisy_line",
+  "description": "cuatro puntos sin recta exacta: x = [0.9, 1.15] y residuo sqrt(2.075)",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 1.0, 1.0, 1.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [0.0, 1.0, 2.0, 3.0]
+    }
+  ],
+  "input": {
+    "dtype": "float64",
+    "values": [1.0, 2.5, 2.0, 5.0]
+  },
+  "op": "lstsq",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "float64",
+        "values": [0.9, 1.15]
+      }
+    ],
+    "residual_norm": 1.4404860290887933,
+    "tolerance": 1e-12
+  }
+}

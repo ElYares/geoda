@@ -17,7 +17,7 @@ use geoda_algo::{
     DecisionTree, KMeansParams, Matrix, Method, Network, Transactions, TreeParams,
     association_rules, cut_merges, dedupe_column, det, edit_distance_columns, fit_tree_columns,
     frequent_itemsets, huffman_decode_column, huffman_encode_column, inverse, kmeans_columns,
-    lis_column, percentile_column, single_linkage_columns, solve,
+    least_squares, lis_column, percentile_column, qr, single_linkage_columns, solve, svd,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -1843,6 +1843,123 @@ pub unsafe extern "C" fn geoda_inverse(
         let inverted = matrix_column(&inverse(&unsafe { matrix_of(a, n_a) }?)?)?;
         // SAFETY: `out` es escribible (arriba).
         unsafe { *out = into_handle(inverted) };
+        Ok(())
+    })
+}
+
+/// Factorizacion QR delgada `A = Q R` por reflexiones de Householder. `a` es una matriz de `m x n`
+/// (`n_a = n` columnas de `m` filas, con `m >= n`). Devuelve **dos columnas `Float64` nuevas**, planas
+/// y por filas:
+///
+/// - `*out_q`: `m * n` valores (columnas ortonormales).
+/// - `*out_r`: `n * n` valores (triangular superior).
+///
+/// Si falla, devuelve un codigo negativo y los dos `out` quedan en NULL: `GEODA_ERR_INVALID_ARGUMENT`
+/// si la lista es NULL o vacia, hay nulos o no finitos, o `m < n`; `GEODA_ERR_LENGTH_MISMATCH` si las
+/// columnas miden distinto.
+///
+/// # Safety
+/// `a` debe apuntar a `n_a` handles validos y los dos `out` deben ser escribibles y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_qr(
+    a: *const *const GeodaColumn,
+    n_a: usize,
+    out_q: *mut *mut GeodaColumn,
+    out_r: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: los `out` son escribibles si no son NULL (contrato).
+        unsafe { null_outs(&[out_q, out_r]) }?;
+        // SAFETY: contrato de `matrix_of`.
+        let factors = qr(&unsafe { matrix_of(a, n_a) }?)?;
+        let (q, r) = (matrix_column(&factors.q)?, matrix_column(&factors.r)?);
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_q = into_handle(q);
+            *out_r = into_handle(r);
+        }
+        Ok(())
+    })
+}
+
+/// SVD delgada `A = U S V^T` (Jacobi unilateral) de una matriz de `m x n` (`n_a = n` columnas de `m`
+/// filas). Con `k = min(m, n)` devuelve **tres columnas `Float64` nuevas**:
+///
+/// - `*out_u`: `m * k` valores por filas (columnas ortonormales).
+/// - `*out_s`: los `k` valores singulares, de mayor a menor.
+/// - `*out_vt`: `k * n` valores por filas (filas ortonormales).
+///
+/// El signo es determinista: en cada columna de `V` la entrada de mayor valor absoluto es positiva.
+/// Si falla, devuelve un codigo negativo y los tres `out` quedan en NULL: `GEODA_ERR_INVALID_ARGUMENT`
+/// si la lista es NULL o vacia, hay nulos o no finitos, o la SVD no converge;
+/// `GEODA_ERR_LENGTH_MISMATCH` si las columnas miden distinto.
+///
+/// # Safety
+/// `a` debe apuntar a `n_a` handles validos y los tres `out` deben ser escribibles y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_svd(
+    a: *const *const GeodaColumn,
+    n_a: usize,
+    out_u: *mut *mut GeodaColumn,
+    out_s: *mut *mut GeodaColumn,
+    out_vt: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: los `out` son escribibles si no son NULL (contrato).
+        unsafe { null_outs(&[out_u, out_s, out_vt]) }?;
+        // SAFETY: contrato de `matrix_of`.
+        let decomposition = svd(&unsafe { matrix_of(a, n_a) }?)?;
+        let (u, s, vt) = (
+            matrix_column(&decomposition.u)?,
+            float64_column(&decomposition.s)?,
+            matrix_column(&decomposition.vt)?,
+        );
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_u = into_handle(u);
+            *out_s = into_handle(s);
+            *out_vt = into_handle(vt);
+        }
+        Ok(())
+    })
+}
+
+/// Minimos cuadrados `min |A x - b|` por QR de Householder. `a` es una matriz de `m x n` (`n_a = n`
+/// columnas, `m >= n`) de rango completo y `b` una columna de `m` valores. Devuelve una columna
+/// `Float64` nueva por `*out_x` con los `n` coeficientes y escribe en `*out_residual` la norma
+/// euclidiana de `A x - b`.
+///
+/// Si falla, devuelve un codigo negativo, `*out_x` queda en NULL y `*out_residual` no se escribe:
+/// `GEODA_ERR_INVALID_ARGUMENT` si `m < n`, las columnas son dependientes (`rango incompleto`) o hay
+/// nulos o no finitos; `GEODA_ERR_LENGTH_MISMATCH` si `b` mide distinto que las filas de `A`.
+///
+/// # Safety
+/// `a` debe apuntar a `n_a` handles validos, `b` ser un handle valido y `out_x` y `out_residual`
+/// escribibles y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_lstsq(
+    a: *const *const GeodaColumn,
+    n_a: usize,
+    b: *const GeodaColumn,
+    out_x: *mut *mut GeodaColumn,
+    out_residual: *mut f64,
+) -> i32 {
+    guard(|| {
+        if out_residual.is_null() {
+            return Err(invalid_argument("out_residual es NULL"));
+        }
+        // SAFETY: `out_x` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out_x]) }?;
+        // SAFETY: contratos de `matrix_of` y `column_ref`.
+        let (a, b) = unsafe { (matrix_of(a, n_a)?, column_ref(b, "b")?) };
+        let b = Matrix::from_columns(&[b])?.column(0);
+        let fit = least_squares(&a, &b)?;
+        let x = float64_column(&fit.coefficients)?;
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_x = into_handle(x);
+            *out_residual = fit.residual_norm;
+        }
         Ok(())
     })
 }

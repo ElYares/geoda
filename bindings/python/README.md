@@ -45,6 +45,9 @@ Los nulos se ignoran. Un `NaN` en los datos da `NaN` en el resultado, nunca se o
 | `solve(a, b)` | `x` de `a x = b` por LU con pivoteo parcial; `ValueError` si `a` es singular o no es cuadrada |
 | `det(a)` | determinante (`0.0` si es singular, sin error) |
 | `inv(a)` | lista de filas de la inversa; `ValueError` si es singular |
+| `qr(a)` | `dict` con `q` y `r` (listas de filas): `a = q r` por Householder, con al menos tantas filas como columnas |
+| `svd(a)` | `dict` con `u`, `s` y `vt`: SVD delgada con valores de mayor a menor y signo fijo (la mayor entrada de cada columna de `V` es positiva) |
+| `lstsq(a, b)` | coeficientes `x` que minimizan `\|a x - b\|`; `ValueError` si las columnas son dependientes |
 | `lis(x)` | `dict` con `length` e `indices`: la subsecuencia estrictamente creciente mas larga. `None` o `NaN` lanzan `ValueError` |
 | `huffman_encode(datos)` | `dict` con `bits` (`bytes`, empaquetados desde el bit mas alto), `bit_len` y `frequencies` (256 `int`). `datos` es `bytes`, `bytearray` o `str` (UTF-8) |
 | `huffman_decode(bits, bit_len, frequencies)` | `bytes`; la tabla se reconstruye de las frecuencias. Bits que no se pueden decodificar lanzan `ValueError` |

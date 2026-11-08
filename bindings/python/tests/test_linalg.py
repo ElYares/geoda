@@ -89,8 +89,56 @@ class DetAndInverse(unittest.TestCase):
             geoda.inv([[1, 2, 3]])
 
 
+class Factorizations(unittest.TestCase):
+    def test_qr_reconstructs(self):
+        a = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
+        f = geoda.qr(a)
+        product = geoda.matmul(f["q"], f["r"])
+        for row, source in zip(product, a):
+            for g, w in zip(row, source):
+                self.assertAlmostEqual(g, w, places=12)
+        self.assertEqual(f["r"][1][0], 0.0)
+
+    def test_qr_wide_is_an_error(self):
+        with self.assertRaises(ValueError):
+            geoda.qr([[1, 2, 3], [4, 5, 6]])
+
+    def test_svd_reconstructs_and_orders(self):
+        a = [[2.0, -1.0, 0.5], [-3.0, 4.0, 1.0], [1.0, 1.0, -2.0], [0.0, 2.0, 2.0]]
+        f = geoda.svd(a)
+        self.assertEqual(f["s"], sorted(f["s"], reverse=True))
+        scaled = [[u * s for u, s in zip(row, f["s"])] for row in f["u"]]
+        product = geoda.matmul(scaled, f["vt"])
+        for row, source in zip(product, a):
+            for g, w in zip(row, source):
+                self.assertAlmostEqual(g, w, places=9)
+
+    def test_svd_is_deterministic(self):
+        a = [[1, 2], [3, 4], [5, 7]]
+        self.assertEqual(geoda.svd(a), geoda.svd(a))
+
+    def test_svd_rank_one(self):
+        f = geoda.svd([[1, 2], [2, 4]])
+        self.assertAlmostEqual(f["s"][0], 5.0, places=12)
+        self.assertAlmostEqual(f["s"][1], 0.0, places=12)
+
+    def test_lstsq(self):
+        x = geoda.lstsq([[1, 0], [1, 1], [1, 2]], [1, 3, 5])
+        self.assertAlmostEqual(x[0], 1.0, places=12)
+        self.assertAlmostEqual(x[1], 2.0, places=12)
+
+    def test_lstsq_errors(self):
+        for call in (
+            lambda: geoda.lstsq([[1, 2], [2, 4], [3, 6]], [1, 2, 3]),
+            lambda: geoda.lstsq([[1, 2, 3]], [1]),
+            lambda: geoda.lstsq([[1, 0], [1, 1]], [1]),
+        ):
+            with self.assertRaises(ValueError):
+                call()
+
+
 class SpecCases(unittest.TestCase):
-    """Los casos `matmul`, `lu_solve`, `det` e `inverse` de la spec dan lo mismo por el binding."""
+    """Los casos de `spec/cases/linalg/` dan lo mismo por el binding."""
 
     def test_cases(self):
         ran = 0
@@ -107,29 +155,42 @@ class SpecCases(unittest.TestCase):
                         continue
                 a = rows_of(inputs)
                 if op == "matmul":
-                    call = lambda: flat(geoda.matmul(a, rows_of(case["inputs2"])))  # noqa: E731
+                    call = lambda: [flat(geoda.matmul(a, rows_of(case["inputs2"])))]  # noqa: E731
                 elif op == "lu_solve":
-                    call = lambda: geoda.solve(a, case["input"]["values"])  # noqa: E731
+                    call = lambda: [geoda.solve(a, case["input"]["values"])]  # noqa: E731
                 elif op == "det":
-                    call = lambda: geoda.det(a)  # noqa: E731
+                    call = lambda: [[geoda.det(a)]]  # noqa: E731
+                elif op == "inverse":
+                    call = lambda: [flat(geoda.inv(a))]  # noqa: E731
+                elif op == "qr":
+                    call = lambda: [  # noqa: E731
+                        flat(geoda.qr(a)["q"]),
+                        flat(geoda.qr(a)["r"]),
+                    ]
+                elif op == "svd":
+                    call = lambda: [  # noqa: E731
+                        flat(geoda.svd(a)["u"]),
+                        geoda.svd(a)["s"],
+                        flat(geoda.svd(a)["vt"]),
+                    ]
                 else:
-                    call = lambda: flat(geoda.inv(a))  # noqa: E731
+                    call = lambda: [geoda.lstsq(a, case["input"]["values"])]  # noqa: E731
                 if "error" in expect:
                     with self.assertRaises(ValueError):
                         call()
                     continue
                 result = call()
                 tolerance = expect.get("tolerance")
-                want = expect["value"] if op == "det" else expect["columns"][0]["values"]
-                got = [result] if op == "det" else result
-                want = [want] if op == "det" else want
-                self.assertEqual(len(got), len(want))
-                for g, w in zip(got, want):
-                    if tolerance is None:
-                        self.assertEqual(g, w)
-                    else:
-                        self.assertLessEqual(abs(g - w), tolerance)
-        self.assertGreaterEqual(ran, 16)
+                wanted = [[expect["value"]]] if op == "det" else [c["values"] for c in expect["columns"]]
+                self.assertEqual(len(result), len(wanted))
+                for got, want in zip(result, wanted):
+                    self.assertEqual(len(got), len(want))
+                    for g, w in zip(got, want):
+                        if tolerance is None:
+                            self.assertEqual(g, w)
+                        else:
+                            self.assertLessEqual(abs(g - w), tolerance)
+        self.assertGreaterEqual(ran, 29)
 
 
 if __name__ == "__main__":

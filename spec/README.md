@@ -93,6 +93,9 @@ no conozca **hace fallar el caso**, no lo salta.
 | `lu_solve` | — | `inputs x = input` por LU (`geoda_lu_solve`) | `expect.columns` |
 | `det` | — | determinante de `inputs` (`geoda_det`) | `expect.value` |
 | `inverse` | — | inversa de `inputs` (`geoda_inverse`) | `expect.columns` |
+| `qr` | — | factorizacion QR delgada de `inputs` (`geoda_qr`) | `expect.columns` |
+| `svd` | — | SVD delgada de `inputs` (`geoda_svd`) | `expect.columns` |
+| `lstsq` | — | minimos cuadrados `inputs x ~ input` (`geoda_lstsq`) | `expect.columns` y `expect.residual_norm` |
 | `graph_bfs` | `source` | recorrido en anchura (`geoda_graph_bfs`) | `expect.columns` |
 | `graph_components` | — | componentes conexas (`geoda_graph_components`) | `expect.columns` y `expect.count` |
 | `graph_topological_order` | — | orden topologico (`geoda_graph_topological_order`) | `expect.columns` |
@@ -254,6 +257,14 @@ columna `float64` plana **por filas** (decision 014, N2), de la que quien llama 
 - `det`: un escalar (`expect.value`). Una matriz singular tiene determinante `0` y **no** es un error;
   una no cuadrada, `LENGTH_MISMATCH`.
 - `inverse`: `n * n` valores. Singular, `INVALID_ARGUMENT`.
+- `qr`: dos columnas planas, `q` (`m * n`, columnas ortonormales) y `r` (`n * n`, triangular superior).
+  Hace falta `m >= n` (`INVALID_ARGUMENT`). El signo es el de las reflexiones de Householder: la diagonal
+  de `R` suele salir negativa.
+- `svd`: tres columnas, `u` (`m * k`, plana por filas), `s` (los `k = min(m, n)` valores singulares,
+  de mayor a menor) y `vt` (`k * n`, plana por filas). Signo fijo (N4): la mayor entrada de cada
+  columna de `V` es positiva. Acepta matrices anchas.
+- `lstsq`: una columna `x` (los `n` coeficientes) y `expect.residual_norm` (la norma de `A x - b`).
+  `m < n` o columnas dependientes, `INVALID_ARGUMENT`; `b` de otro largo, `LENGTH_MISMATCH`.
 
 **Tolerancia.** `expect.tolerance` (opcional, un numero finito `>= 0`) es el error absoluto maximo
 con el que se comparan los valores `float64` de `expect.columns`, `expect.value` y los escalares con

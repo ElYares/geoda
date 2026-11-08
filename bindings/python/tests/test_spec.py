@@ -16,7 +16,7 @@ SCALAR_OPS = ("count", "sum", "min", "max", "mean", "var", "std", "corr")
 COLUMNS_OPS = ("histogram", "group_by")
 GRAPH_OPS = ("graph_bfs", "graph_components", "graph_topological_order", "graph_dijkstra", "graph_mst")
 TEXT_OPS = ("edit_distance", "lis", "huffman_encode", "huffman_decode", "dedupe", "dendrogram_cut", "apriori_itemsets", "apriori_rules")
-MATRIX_OPS = ("kmeans", "hierarchical", "tree_fit_predict", "matmul", "lu_solve", "det", "inverse")
+MATRIX_OPS = ("kmeans", "hierarchical", "tree_fit_predict", "matmul", "lu_solve", "det", "inverse", "qr", "svd", "lstsq")
 OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile") + SCALAR_OPS + COLUMNS_OPS + TEXT_OPS + MATRIX_OPS
 
 
@@ -181,7 +181,7 @@ def run_matrix_case(case, op, expect):
                     args["seed"],
                 )
                 extras = {"inertia": inertia, "iterations": iterations}
-            elif op in ("matmul", "lu_solve", "det", "inverse"):
+            elif op in ("matmul", "lu_solve", "det", "inverse", "qr", "svd", "lstsq"):
                 outputs, code, extras = _run_linalg(op, case, owned, owned_extra := [])
                 owned.extend(owned_extra)
             elif op == "tree_fit_predict":
@@ -221,6 +221,17 @@ def _run_linalg(op, case, a, owned_extra):
     if op == "inverse":
         outputs, code = capi.inverse(a)
         return outputs, code, {}
+    if op in ("qr", "svd"):
+        outputs, code = getattr(capi, op)(a)
+        return outputs, code, {}
+    if op == "lstsq":
+        b, code = _import(case["input"])
+        if b is not None:
+            owned_extra.append(b)
+        if code != capi.OK:
+            return [], code, {}
+        outputs, code, residual = capi.lstsq(a, b)
+        return outputs, code, {"residual_norm": residual}
     if op == "lu_solve":
         b, code = _import(case["input"])
         if b is not None:

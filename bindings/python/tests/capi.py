@@ -239,6 +239,24 @@ def _load():
             [ctypes.POINTER(p_handle), ctypes.c_size_t, ctypes.POINTER(p_handle)],
             ctypes.c_int32,
         ),
+        "geoda_qr": (
+            [ctypes.POINTER(p_handle), ctypes.c_size_t] + [ctypes.POINTER(p_handle)] * 2,
+            ctypes.c_int32,
+        ),
+        "geoda_svd": (
+            [ctypes.POINTER(p_handle), ctypes.c_size_t] + [ctypes.POINTER(p_handle)] * 3,
+            ctypes.c_int32,
+        ),
+        "geoda_lstsq": (
+            [
+                ctypes.POINTER(p_handle),
+                ctypes.c_size_t,
+                p_handle,
+                ctypes.POINTER(p_handle),
+                ctypes.POINTER(ctypes.c_double),
+            ],
+            ctypes.c_int32,
+        ),
         "geoda_dendrogram_cut": (
             [p_handle, p_handle, ctypes.c_size_t, ctypes.c_size_t, ctypes.POINTER(p_handle)],
             ctypes.c_int32,
@@ -557,6 +575,31 @@ def inverse(a):
     outs = [ctypes.c_void_p(None)]
     code = LIB.geoda_inverse(_handle_array(a), len(a), ctypes.byref(outs[0]))
     return Column._own(outs, code)
+
+
+def qr(a):
+    """`([q, r], 0)` o `([], codigo)`: dos columnas planas por filas."""
+    outs = [ctypes.c_void_p(None) for _ in range(2)]
+    code = LIB.geoda_qr(_handle_array(a), len(a), *(ctypes.byref(o) for o in outs))
+    return Column._own(outs, code)
+
+
+def svd(a):
+    """`([u, s, vt], 0)` o `([], codigo)`: `u` y `vt` planas por filas."""
+    outs = [ctypes.c_void_p(None) for _ in range(3)]
+    code = LIB.geoda_svd(_handle_array(a), len(a), *(ctypes.byref(o) for o in outs))
+    return Column._own(outs, code)
+
+
+def lstsq(a, b):
+    """`([x], 0, norma_del_residuo)` o `([], codigo, None)`."""
+    outs = [ctypes.c_void_p(None)]
+    residual = ctypes.c_double(float("nan"))
+    code = LIB.geoda_lstsq(
+        _handle_array(a), len(a), b.handle, ctypes.byref(outs[0]), ctypes.byref(residual)
+    )
+    handles, code = Column._own(outs, code)
+    return handles, code, (residual.value if code == OK else None)
 
 
 def hierarchical(columns):
