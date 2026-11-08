@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use geoda_algo::{
     Dataset, Graph, Huffman, KMeansParams, Matrix, Transactions, TreeParams, WeightedGraph,
     association_rules, bfs, dedupe_similar, dfs, dijkstra, edit_distance, fit_tree,
-    frequent_itemsets, kmeans, lis, median_of_medians, merge_sort, quickselect, single_linkage,
+    frequent_itemsets, kmeans, lis, lu, median_of_medians, merge_sort, quickselect, single_linkage,
 };
 use geoda_core::file::{ColumnFileReader, ColumnFileWriter};
 use geoda_core::{Column, DataType, PrimitiveBuilder};
@@ -548,6 +548,24 @@ fn bench_linalg() {
         "\nproducto de dos matrices de 500 x 500: {} ms (c[0][0] = {:.4})",
         ms(started.elapsed()),
         product.get(0, 0)
+    );
+
+    // LU: resolver A x = b y comprobar el residuo, con A de 500 x 500.
+    let b: Vec<f64> = (0..500).map(|_| unit(&mut rng) - 0.5).collect();
+    let started = Instant::now();
+    let factorization = lu(black_box(&a)).expect("no singular");
+    let factored = started.elapsed();
+    let x = factorization.solve(&b).expect("solve");
+    let residual = a
+        .matvec(&x)
+        .expect("matvec")
+        .iter()
+        .zip(&b)
+        .map(|(p, q)| (p - q).abs())
+        .fold(0.0, f64::max);
+    println!(
+        "LU de 500 x 500: factoriza en {} ms, resuelve con residuo maximo {residual:.2e}",
+        ms(factored)
     );
 }
 

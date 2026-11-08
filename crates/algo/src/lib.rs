@@ -16,6 +16,7 @@ pub mod hierarchical;
 pub mod huffman;
 pub mod kmeans;
 pub mod lis;
+pub mod lu;
 pub mod mat;
 pub mod matrix;
 pub mod network;
@@ -44,6 +45,7 @@ pub use hierarchical::{
 pub use huffman::{Code, Encoded, Huffman, frequencies};
 pub use kmeans::{KMeans, KMeansParams, kmeans, kmeans_columns};
 pub use lis::{Lis, lis};
+pub use lu::{Lu, det, inverse, lu, solve};
 pub use mat::Matrix;
 pub use matrix::{Dataset, Rng, squared_distance};
 pub use network::Network;

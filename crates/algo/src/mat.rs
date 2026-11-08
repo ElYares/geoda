@@ -202,6 +202,10 @@ impl Matrix {
         (0..self.rows).map(|i| self.row(i).to_vec()).collect()
     }
 
+    pub(crate) fn data_mut(&mut self) -> &mut [f64] {
+        &mut self.data
+    }
+
     /// La transpuesta.
     ///
     /// # Errors
