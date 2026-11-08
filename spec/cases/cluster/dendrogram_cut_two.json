@@ -1,0 +1,26 @@
+{
+  "spec_version": 1,
+  "id": "cluster/dendrogram_cut_two",
+  "description": "cortar el dendrograma de cuatro filas en 2 grupos",
+  "input": {
+    "dtype": "int64",
+    "values": [0, 2, 4]
+  },
+  "input2": {
+    "dtype": "int64",
+    "values": [1, 3, 5]
+  },
+  "args": {
+    "n": 4,
+    "k": 2
+  },
+  "op": "dendrogram_cut",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int64",
+        "values": [0, 0, 1, 1]
+      }
+    ]
+  }
+}

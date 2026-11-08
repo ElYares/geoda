@@ -22,10 +22,10 @@ use geoda::{
     geoda_column_lis, geoda_column_max_f64, geoda_column_max_i64, geoda_column_mean,
     geoda_column_median, geoda_column_min_f64, geoda_column_min_i64, geoda_column_null_count,
     geoda_column_percentile, geoda_column_slice, geoda_column_std, geoda_column_sum_f64,
-    geoda_column_sum_i64, geoda_column_to_arrow, geoda_column_var, geoda_graph_bfs,
-    geoda_graph_components, geoda_graph_dijkstra, geoda_graph_free, geoda_graph_mst,
-    geoda_graph_new, geoda_graph_topological_order, geoda_huffman_decode, geoda_huffman_encode,
-    geoda_last_error_message,
+    geoda_column_sum_i64, geoda_column_to_arrow, geoda_column_var, geoda_dendrogram_cut,
+    geoda_graph_bfs, geoda_graph_components, geoda_graph_dijkstra, geoda_graph_free,
+    geoda_graph_mst, geoda_graph_new, geoda_graph_topological_order, geoda_hierarchical,
+    geoda_huffman_decode, geoda_huffman_encode, geoda_kmeans, geoda_last_error_message,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -462,7 +462,7 @@ fn run_op(op: &str, case: &Value, handle: Handle) -> Result<OpResult, String> {
             run_scalar(op, case, &handle)
         }
         "histogram" => run_histogram(case, &handle),
-        "edit_distance" | "huffman_decode" => run_pair(op, case, &handle),
+        "edit_distance" | "huffman_decode" | "dendrogram_cut" => run_pair(op, case, &handle),
         "dedupe" => {
             let (mut out, mut count) = (ptr::null_mut::<GeodaColumn>(), -1_i64);
             // SAFETY: handle valido y los `out` son escribibles.
@@ -517,8 +517,8 @@ fn run_op(op: &str, case: &Value, handle: Handle) -> Result<OpResult, String> {
     }
 }
 
-/// Operaciones de texto que reciben dos columnas (`input` e `input2`) y devuelven una:
-/// `edit_distance` (`a`, `b`) y `huffman_decode` (`frequencies`, `bits`).
+/// Operaciones que reciben dos columnas (`input` e `input2`) y devuelven una: `edit_distance`
+/// (`a`, `b`), `huffman_decode` (`frequencies`, `bits`) y `dendrogram_cut` (`left`, `right`).
 fn run_pair(op: &str, case: &Value, handle: &Handle) -> Result<OpResult, String> {
     let other = match import_through_capi(case.get("input2").ok_or("input2 falta")?)? {
         Ok(other) => other,
@@ -527,13 +527,94 @@ fn run_pair(op: &str, case: &Value, handle: &Handle) -> Result<OpResult, String>
     let mut out: *mut GeodaColumn = ptr::null_mut();
     // SAFETY: handles validos y `out` escribible.
     let code = unsafe {
-        if op == "edit_distance" {
-            geoda_column_edit_distance(handle.0, other.0, &raw mut out)
-        } else {
-            geoda_huffman_decode(handle.0, other.0, &raw mut out)
+        match op {
+            "edit_distance" => geoda_column_edit_distance(handle.0, other.0, &raw mut out),
+            "dendrogram_cut" => geoda_dendrogram_cut(
+                handle.0,
+                other.0,
+                usize_arg(case, "n")?,
+                usize_arg(case, "k")?,
+                &raw mut out,
+            ),
+            _ => geoda_huffman_decode(handle.0, other.0, &raw mut out),
         }
     };
     collect_outs(code, &[out])
+}
+
+/// Operaciones sobre una matriz: `case.inputs` es la lista de columnas (una por variable) y se
+/// entregan a la capi como un arreglo de handles (`kmeans`, `hierarchical`).
+fn run_matrix_op(op: &str, case: &Value, inputs: &Value) -> Result<OpResult, String> {
+    let specs = inputs.as_array().ok_or("inputs debe ser una lista")?;
+    let mut owned = Vec::new();
+    for spec in specs {
+        match import_through_capi(spec)? {
+            Ok(handle) => owned.push(handle),
+            Err(code) => return Ok(Err(code)),
+        }
+    }
+    let pointers: Vec<*const GeodaColumn> = owned.iter().map(|h| h.0.cast_const()).collect();
+    match op {
+        "kmeans" => {
+            let max_iter = match case["args"].get("max_iter") {
+                None | Some(Value::Null) => 100,
+                Some(_) => usize_arg(case, "max_iter")?,
+            };
+            let tol = match case["args"].get("tol") {
+                None | Some(Value::Null) => 1e-4,
+                Some(value) => parse_f64(value)?,
+            };
+            let seed = case["args"]["seed"].as_u64().ok_or("args.seed falta")?;
+            let mut outs = [ptr::null_mut::<GeodaColumn>(); 2];
+            let [labels, centroids] = &mut outs;
+            let (mut inertia, mut iterations) = (f64::NAN, -1_i64);
+            // SAFETY: handles validos, arreglo de `pointers.len()` punteros y `out` escribibles.
+            let code = unsafe {
+                geoda_kmeans(
+                    pointers.as_ptr(),
+                    pointers.len(),
+                    usize_arg(case, "k")?,
+                    max_iter,
+                    tol,
+                    seed,
+                    labels,
+                    centroids,
+                    &raw mut inertia,
+                    &raw mut iterations,
+                )
+            };
+            collect_with_extras(
+                code,
+                &outs,
+                vec![
+                    ("inertia", Extra::Float(inertia)),
+                    ("iterations", Extra::Int(iterations)),
+                ],
+            )
+        }
+        "hierarchical" => {
+            let mut outs = [ptr::null_mut::<GeodaColumn>(); 4];
+            let [left, right, height, size] = &mut outs;
+            // SAFETY: handles validos, arreglo de `pointers.len()` punteros y `out` escribibles.
+            let code = unsafe {
+                geoda_hierarchical(pointers.as_ptr(), pointers.len(), left, right, height, size)
+            };
+            collect_with_extras(code, &outs, Vec::new())
+        }
+        otro => Err(format!("op de matriz desconocida: {otro:?}")),
+    }
+}
+
+/// Como `collect_outs`, pero con escalares con nombre que se comparan con `expect`.
+fn collect_with_extras(
+    code: i32,
+    outs: &[*mut GeodaColumn],
+    extras: Vec<(&'static str, Extra)>,
+) -> Result<OpResult, String> {
+    match collect_outs(code, outs)? {
+        Ok(Outcome::Columns(handles)) => Ok(Ok(Outcome::Graph(handles, extras))),
+        other => Ok(other),
+    }
 }
 
 /// `n_bins` o `ddof`: un entero >= 0 de `args`.
@@ -800,7 +881,9 @@ fn run_case(case: &Value) -> CaseResult {
     let op = case["op"].as_str().ok_or("op falta")?;
     let expect = case.get("expect").ok_or("expect falta")?;
 
-    let result = if let Some(spec) = case.get("graph") {
+    let result = if let Some(inputs) = case.get("inputs") {
+        run_matrix_op(op, case, inputs)?
+    } else if let Some(spec) = case.get("graph") {
         match build_graph(spec)? {
             Ok(graph) => run_graph_op(op, case, &graph)?,
             Err(code) => Err(code),

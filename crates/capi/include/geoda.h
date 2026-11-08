@@ -581,6 +581,79 @@ int32_t geoda_column_dedupe(const struct GeodaColumn *column,
                             struct GeodaColumn **out_ids,
                             int64_t *out_count);
 
+// K-means sobre una matriz de `n_columns` columnas (`Int32`, `Int64` o `Float64`, sin nulos ni
+// `NaN`), con inicializacion k-means++ y `seed` explicita: la misma entrada, `k` y semilla dan el
+// mismo resultado. Devuelve **dos columnas nuevas** y dos escalares:
+//
+// - `*out_labels`: `Int64`, el grupo (`0..k`) de cada fila.
+// - `*out_centroids`: `Float64`, `k * n_columns` valores **por filas** (el centroide `c` ocupa
+//   las posiciones `c * n_columns .. (c + 1) * n_columns`).
+// - `*out_inertia`: suma de distancias al cuadrado de cada fila a su centroide.
+// - `*out_iterations`: iteraciones hechas.
+//
+// `max_iter` es el tope de iteraciones (al menos 1) y `tol` el movimiento maximo de un centroide
+// con el que se da por convergido (finito y no negativo).
+//
+// Si falla, devuelve un codigo negativo, las dos columnas quedan en NULL y los escalares no se
+// escriben: `GEODA_ERR_INVALID_ARGUMENT` si `columns` es NULL o `n_columns` es 0, hay nulos o
+// valores no finitos, `k` es 0 o mayor que las filas, o `max_iter`/`tol` no valen;
+// `GEODA_ERR_LENGTH_MISMATCH` si las columnas miden distinto.
+//
+// # Safety
+// `columns` debe apuntar a `n_columns` handles validos; los cuatro `out` deben ser escribibles y
+// no NULL. Las columnas de salida se liberan con `geoda_column_free`.
+int32_t geoda_kmeans(const struct GeodaColumn *const *columns,
+                     size_t n_columns,
+                     size_t k,
+                     size_t max_iter,
+                     double tol,
+                     uint64_t seed,
+                     struct GeodaColumn **out_labels,
+                     struct GeodaColumn **out_centroids,
+                     double *out_inertia,
+                     int64_t *out_iterations);
+
+// Dendrograma de enlace simple (clustering jerarquico con distancia euclidiana) de una matriz de
+// `n_columns` columnas (`Int32`, `Int64` o `Float64`, sin nulos ni `NaN`) de hasta 5000 filas.
+// Devuelve **cuatro columnas nuevas** con `n - 1` filas cada una (ninguna si hay 1 fila):
+//
+// - `*out_left` y `*out_right`: `Int64`, los dos grupos que se unen (`left < right`). Los grupos
+//   `0..n` son las filas; la union numero `s` crea el grupo `n + s`.
+// - `*out_height`: `Float64`, la distancia a la que se unen (no decrece).
+// - `*out_size`: `Int64`, las filas del grupo resultante.
+//
+// Si falla, devuelve un codigo negativo y los cuatro `out` quedan en NULL:
+// `GEODA_ERR_INVALID_ARGUMENT` si `columns` es NULL o `n_columns` es 0, hay nulos o no finitos, o
+// hay mas de 5000 filas; `GEODA_ERR_LENGTH_MISMATCH` si las columnas miden distinto.
+//
+// # Safety
+// `columns` debe apuntar a `n_columns` handles validos; los cuatro `out` deben ser escribibles y
+// no NULL. Cada columna se libera con `geoda_column_free`.
+int32_t geoda_hierarchical(const struct GeodaColumn *const *columns,
+                           size_t n_columns,
+                           struct GeodaColumn **out_left,
+                           struct GeodaColumn **out_right,
+                           struct GeodaColumn **out_height,
+                           struct GeodaColumn **out_size);
+
+// Corta en `k` grupos un dendrograma de `n` filas dado por sus uniones (`left` y `right`, las dos
+// `Int64` de `n - 1` filas, como las devuelve `geoda_hierarchical`). Devuelve una columna `Int64`
+// nueva por `*out_labels` con el grupo (`0..k`) de cada fila, numerados por la primera fila en
+// que aparece cada uno.
+//
+// `*out_labels` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y
+// `*out_labels` queda en NULL: `GEODA_ERR_INVALID_ARGUMENT` si `k` es 0 o mayor que `n`, las
+// columnas no tienen `n - 1` filas, hay nulos o una union usa un grupo que aun no existe;
+// `GEODA_ERR_OUT_OF_BOUNDS` si hay un grupo negativo y `GEODA_ERR_TYPE_MISMATCH` si no son `Int64`.
+//
+// # Safety
+// `left` y `right` deben ser handles validos y `out_labels` escribible y no NULL.
+int32_t geoda_dendrogram_cut(const struct GeodaColumn *left,
+                             const struct GeodaColumn *right,
+                             size_t n,
+                             size_t k,
+                             struct GeodaColumn **out_labels);
+
 // Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 // ya no es valido; liberarlo dos veces es comportamiento indefinido.
 //

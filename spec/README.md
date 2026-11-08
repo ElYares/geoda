@@ -83,6 +83,9 @@ no conozca **hace fallar el caso**, no lo salta.
 | `lis` | — | posiciones de la subsecuencia creciente mas larga (`geoda_column_lis`) | `expect.columns` |
 | `huffman_encode` | — | codifica los bytes de `input` (`geoda_huffman_encode`) | `expect.columns` |
 | `huffman_decode` | — | decodifica `input2` con las frecuencias de `input` (`geoda_huffman_decode`) | `expect.columns` |
+| `kmeans` | `k`, `seed`, `max_iter`, `tol` | k-means sobre `inputs` (`geoda_kmeans`) | `expect.columns`, `expect.inertia` y `expect.iterations` |
+| `hierarchical` | — | dendrograma de enlace simple sobre `inputs` (`geoda_hierarchical`) | `expect.columns` |
+| `dendrogram_cut` | `n`, `k` | corta un dendrograma dado por `input` (left) e `input2` (right) (`geoda_dendrogram_cut`) | `expect.columns` |
 | `graph_bfs` | `source` | recorrido en anchura (`geoda_graph_bfs`) | `expect.columns` |
 | `graph_components` | — | componentes conexas (`geoda_graph_components`) | `expect.columns` y `expect.count` |
 | `graph_topological_order` | — | orden topologico (`geoda_graph_topological_order`) | `expect.columns` |
@@ -167,7 +170,7 @@ la consulta. Las columnas de resultado, en este orden:
   (`float64`, en ese orden) y `expect.components` cuantas componentes tiene el grafo. Sin pesos es
   `TYPE_MISMATCH`; dirigido, `INVALID_ARGUMENT`.
 
-`expect.count`, `total` y `components` se comparan exactos (el flotante bit a bit).
+`expect.count`, `total` y `components` se comparan exactos (el flotante bit a bit); igual `inertia` e `iterations`.
 
 #### Texto y similitud (fase 5)
 
@@ -190,6 +193,27 @@ la consulta. Las columnas de resultado, en este orden:
 - `huffman_decode`: `input` son las frecuencias (`int64`, 256 no negativas) e `input2` los bits
   (`bool`, sin nulos). Sale una columna `int32` con los bytes. Bits que terminan a media palabra,
   frecuencias que no son 256 o un nulo son `INVALID_ARGUMENT`.
+
+#### Mineria (fase 6)
+
+Una matriz de datos es una **lista de columnas** (una por variable): un caso de `kmeans` o
+`hierarchical` lleva `inputs` (lista de columnas, cada una con `dtype` y `values`) en lugar de
+`input`. El runner las importa y entrega a la capi un arreglo de handles. Las columnas son
+`int32`, `int64` o `float64`, sin nulos ni `NaN` (`INVALID_ARGUMENT`); largos distintos son
+`LENGTH_MISMATCH`; una lista vacia o una columna de texto, `INVALID_ARGUMENT`.
+
+- `kmeans` (`args.k`, `args.seed` obligatorios; `args.max_iter` por defecto 100 y `args.tol` por
+  defecto `1e-4`): sale `labels` (`int64`, el grupo de cada fila) y `centroids` (`float64`, `k * d`
+  valores **por filas**: el centroide `c` ocupa `c * d .. (c + 1) * d`); `expect.inertia` (`float64`,
+  bit a bit) y `expect.iterations` (entero). La semilla fija el resultado; los casos usan datos
+  cuyas medias son exactas. `k = 0`, `k` mayor que las filas o `max_iter = 0` son `INVALID_ARGUMENT`.
+- `hierarchical`: salen `left`, `right`, `height` y `size` (`n - 1` filas cada una; vacias con una
+  sola fila). Los grupos `0..n` son las filas y la union `s` crea el grupo `n + s`. Mas de 5000 filas
+  es `INVALID_ARGUMENT`.
+- `dendrogram_cut` (`args.n`, `args.k`): `input` es `left` e `input2` es `right` (`int64`, `n - 1`
+  filas); sale `labels` (`int64`, `0..k`, numerados por la primera fila de cada grupo). `k` fuera de
+  `1..=n`, un largo que no es `n - 1` o una union con un grupo que aun no existe son
+  `INVALID_ARGUMENT`; un negativo, `OUT_OF_BOUNDS`; otro tipo, `TYPE_MISMATCH`.
 
 ### `expect`
 

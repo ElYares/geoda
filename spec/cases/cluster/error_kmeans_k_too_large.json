@@ -1,0 +1,19 @@
+{
+  "spec_version": 1,
+  "id": "cluster/error_kmeans_k_too_large",
+  "description": "k mayor que las filas es INVALID_ARGUMENT",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [0.0, 0.0, 10.0, 10.0]
+    }
+  ],
+  "args": {
+    "k": 5,
+    "seed": 0
+  },
+  "op": "kmeans",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

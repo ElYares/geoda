@@ -109,33 +109,63 @@ impl Dendrogram {
     /// # Errors
     /// [`Error::InvalidArgument`] si `k` es 0 o mayor que `n`.
     pub fn cut(&self, k: usize) -> Result<Vec<usize>, Error> {
-        let n = self.n;
-        if k == 0 || k > n {
+        cut_merges(self.n, &self.left, &self.right, k)
+    }
+}
+
+/// Corta en `k` grupos un dendrograma dado solo por sus uniones (`left` y `right`, como las de
+/// [`Dendrogram`]): sirve para cortar uno que se guardo fuera de Rust.
+///
+/// # Errors
+/// [`Error::InvalidArgument`] si `k` es 0 o mayor que `n`, si hay mas o menos de `n - 1` uniones,
+/// o si una union menciona un grupo que todavia no existe (`>= n + paso`).
+pub fn cut_merges(
+    n: usize,
+    left: &[usize],
+    right: &[usize],
+    k: usize,
+) -> Result<Vec<usize>, Error> {
+    if k == 0 || k > n {
+        return Err(Error::InvalidArgument(format!(
+            "k = {k} debe estar entre 1 y el numero de filas ({n})"
+        )));
+    }
+    let merges = n.saturating_sub(1);
+    if left.len() != merges || right.len() != merges {
+        return Err(Error::InvalidArgument(format!(
+            "un dendrograma de {n} filas tiene {merges} uniones, no {} y {}",
+            left.len(),
+            right.len()
+        )));
+    }
+    let mut sets = UnionFind::new(n)?;
+    // Una fila cualquiera de cada grupo del dendrograma, para poder unir por fila.
+    let mut leaf_of_group: Vec<usize> = (0..n).collect();
+    for step in 0..merges {
+        let (a, b) = (left[step], right[step]);
+        if a >= n + step || b >= n + step {
             return Err(Error::InvalidArgument(format!(
-                "k = {k} debe estar entre 1 y el numero de filas ({n})"
+                "la union {step} usa el grupo {} que todavia no existe",
+                a.max(b)
             )));
         }
-        let mut sets = UnionFind::new(n)?;
-        // Una fila cualquiera de cada grupo del dendrograma, para poder unir por fila.
-        let mut leaf_of_group: Vec<usize> = (0..n).collect();
-        for step in 0..n - k {
-            let (a, b) = (self.left[step], self.right[step]);
-            let (leaf_a, leaf_b) = (leaf_of_group[a], leaf_of_group[b]);
+        let (leaf_a, leaf_b) = (leaf_of_group[a], leaf_of_group[b]);
+        if step < n - k {
             sets.union(leaf_a, leaf_b)?;
-            leaf_of_group.push(leaf_a);
         }
-        let mut label_of_root: Vec<Option<usize>> = vec![None; n];
-        let mut next = 0;
-        let mut labels = Vec::with_capacity(n);
-        for row in 0..n {
-            let root = sets.find(row)?;
-            labels.push(*label_of_root[root].get_or_insert_with(|| {
-                next += 1;
-                next - 1
-            }));
-        }
-        Ok(labels)
+        leaf_of_group.push(leaf_a);
     }
+    let mut label_of_root: Vec<Option<usize>> = vec![None; n];
+    let mut next = 0;
+    let mut labels = Vec::with_capacity(n);
+    for row in 0..n {
+        let root = sets.find(row)?;
+        labels.push(*label_of_root[root].get_or_insert_with(|| {
+            next += 1;
+            next - 1
+        }));
+    }
+    Ok(labels)
 }
 
 #[cfg(test)]
@@ -163,6 +193,25 @@ mod tests {
         assert_eq!(d.cut(2).unwrap(), [0, 0, 1, 1]);
         assert_eq!(d.cut(4).unwrap(), [0, 1, 2, 3]);
         assert_eq!(d.cut(1).unwrap(), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn cortar_por_uniones_valida_la_entrada() {
+        use super::cut_merges;
+        assert_eq!(
+            cut_merges(4, &[0, 2, 4], &[1, 3, 5], 2).unwrap(),
+            [0, 0, 1, 1]
+        );
+        assert!(matches!(
+            cut_merges(4, &[0, 2], &[1, 3], 2),
+            Err(Error::InvalidArgument(_))
+        ));
+        // La union 0 menciona el grupo 9, que no existe todavia.
+        assert!(matches!(
+            cut_merges(4, &[0, 2, 4], &[9, 3, 5], 2),
+            Err(Error::InvalidArgument(_))
+        ));
+        assert_eq!(cut_merges(1, &[], &[], 1).unwrap(), [0]);
     }
 
     #[test]

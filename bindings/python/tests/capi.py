@@ -179,6 +179,29 @@ def _load():
             [p_handle, ctypes.c_size_t, ctypes.POINTER(p_handle), ctypes.POINTER(ctypes.c_int64)],
             ctypes.c_int32,
         ),
+        "geoda_kmeans": (
+            [
+                ctypes.POINTER(p_handle),
+                ctypes.c_size_t,
+                ctypes.c_size_t,
+                ctypes.c_size_t,
+                ctypes.c_double,
+                ctypes.c_uint64,
+                ctypes.POINTER(p_handle),
+                ctypes.POINTER(p_handle),
+                ctypes.POINTER(ctypes.c_double),
+                ctypes.POINTER(ctypes.c_int64),
+            ],
+            ctypes.c_int32,
+        ),
+        "geoda_hierarchical": (
+            [ctypes.POINTER(p_handle), ctypes.c_size_t] + [ctypes.POINTER(p_handle)] * 4,
+            ctypes.c_int32,
+        ),
+        "geoda_dendrogram_cut": (
+            [p_handle, p_handle, ctypes.c_size_t, ctypes.c_size_t, ctypes.POINTER(p_handle)],
+            ctypes.c_int32,
+        ),
         "geoda_column_lis": ([p_handle, ctypes.POINTER(p_handle)], ctypes.c_int32),
         "geoda_huffman_encode": (
             [p_handle, ctypes.POINTER(p_handle), ctypes.POINTER(p_handle)],
@@ -338,6 +361,12 @@ class Column:
             return columns, code, None
         return columns, code, count.value
 
+    def dendrogram_cut(self, right, n, k):
+        """`([labels], 0)` o `([], codigo)`; `self` es `left` y `right` la segunda columna."""
+        outs = [ctypes.c_void_p(None)]
+        code = LIB.geoda_dendrogram_cut(self.handle, right.handle, n, k, ctypes.byref(outs[0]))
+        return Column._own(outs, code)
+
     def huffman_encode(self):
         """`([bits, frecuencias], 0)` o `([], codigo)`; `self` son los bytes (`Int32`)."""
         outs = [ctypes.c_void_p(None) for _ in range(2)]
@@ -411,6 +440,41 @@ class Graph:
         if code != OK:
             return columns, code, None, None
         return columns, code, total.value, components.value
+
+
+def _handle_array(columns):
+    """Arreglo C de handles (`const GeodaColumn *const *`) para una matriz de datos."""
+    return (ctypes.c_void_p * max(len(columns), 1))(*(c.handle for c in columns))
+
+
+def kmeans(columns, k, max_iter, tol, seed):
+    """`([labels, centroids], 0, inertia, iterations)` o `([], codigo, None, None)`."""
+    outs = [ctypes.c_void_p(None) for _ in range(2)]
+    inertia, iterations = ctypes.c_double(float("nan")), ctypes.c_int64(-1)
+    code = LIB.geoda_kmeans(
+        _handle_array(columns),
+        len(columns),
+        k,
+        max_iter,
+        tol,
+        seed,
+        *(ctypes.byref(o) for o in outs),
+        ctypes.byref(inertia),
+        ctypes.byref(iterations),
+    )
+    handles, code = Column._own(outs, code)
+    if code != OK:
+        return handles, code, None, None
+    return handles, code, inertia.value, iterations.value
+
+
+def hierarchical(columns):
+    """`([left, right, height, size], 0)` o `([], codigo)`."""
+    outs = [ctypes.c_void_p(None) for _ in range(4)]
+    code = LIB.geoda_hierarchical(
+        _handle_array(columns), len(columns), *(ctypes.byref(o) for o in outs)
+    )
+    return Column._own(outs, code)
 
 
 def graph_new(n, from_column, to_column, weights_column, directed):

@@ -15,8 +15,9 @@ CASES_DIR = capi.ROOT / "spec" / "cases"
 SCALAR_OPS = ("count", "sum", "min", "max", "mean", "var", "std", "corr")
 COLUMNS_OPS = ("histogram", "group_by")
 GRAPH_OPS = ("graph_bfs", "graph_components", "graph_topological_order", "graph_dijkstra", "graph_mst")
-TEXT_OPS = ("edit_distance", "lis", "huffman_encode", "huffman_decode", "dedupe")
-OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile") + SCALAR_OPS + COLUMNS_OPS + TEXT_OPS
+TEXT_OPS = ("edit_distance", "lis", "huffman_encode", "huffman_decode", "dedupe", "dendrogram_cut")
+MATRIX_OPS = ("kmeans", "hierarchical")
+OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile") + SCALAR_OPS + COLUMNS_OPS + TEXT_OPS + MATRIX_OPS
 
 
 class CaseFailure(Exception):
@@ -35,6 +36,8 @@ def run_case(case):
         raise CaseFailure(f"op desconocida: {op!r}")
     if "graph" in case:
         return run_graph_case(case, op, expect)
+    if "inputs" in case:
+        return run_matrix_case(case, op, expect)
 
     column, code = _import(case["input"])
     result = None
@@ -149,6 +152,56 @@ def run_graph_case(case, op, expect):
             handle.close()
 
 
+def run_matrix_case(case, op, expect):
+    """Operaciones sobre una matriz (`kmeans`, `hierarchical`): `inputs` es la lista de columnas,
+    que viajan a la capi como un arreglo de handles. `expect` compara columnas y, en `kmeans`,
+    `inertia` e `iterations`."""
+    if op not in MATRIX_OPS:
+        raise CaseFailure(f"op de matriz desconocida: {op!r}")
+    owned, outputs, extras = [], [], {}
+    try:
+        code = capi.OK
+        for spec in case["inputs"]:
+            column, code = _import(spec)
+            if column is not None:
+                owned.append(column)
+            if code != capi.OK:
+                break
+        if code == capi.OK:
+            args = case.get("args", {})
+            if op == "kmeans":
+                for key in ("k", "seed"):
+                    if not isinstance(args.get(key), int) or args[key] < 0:
+                        raise CaseFailure(f"args.{key} falta o no es un entero >= 0")
+                outputs, code, inertia, iterations = capi.kmeans(
+                    owned,
+                    args["k"],
+                    args.get("max_iter", 100),
+                    capi.parse_float(args.get("tol", 1e-4)),
+                    args["seed"],
+                )
+                extras = {"inertia": inertia, "iterations": iterations}
+            else:
+                outputs, code = capi.hierarchical(owned)
+        if code != capi.OK:
+            _check_error(expect, code)
+            return
+        if "error" in expect:
+            raise CaseFailure(f"esperaba el error {expect['error']!r}, pero la operacion tuvo exito")
+        _check_columns(expect, outputs)
+        for key, actual in extras.items():
+            if key not in expect:
+                continue
+            if isinstance(actual, float):
+                if not capi.same_float(capi.parse_float(expect[key]), actual):
+                    raise CaseFailure(f"{key}: esperado {expect[key]!r}, salio {actual!r}")
+            elif expect[key] != actual:
+                raise CaseFailure(f"{key}: esperado {expect[key]!r}, salio {actual!r}")
+    finally:
+        for handle in (*outputs, *owned):
+            handle.close()
+
+
 def _workers(case):
     """`args.workers`: hilos de la operacion; si falta, 1 (0 se acepta para probar el error)."""
     workers = case.get("args", {}).get("workers", 1)
@@ -232,6 +285,12 @@ def _run_text(op, case, column):
     if code != capi.OK:
         return [], code
     try:
+        if op == "dendrogram_cut":
+            args = case.get("args", {})
+            for key in ("n", "k"):
+                if not isinstance(args.get(key), int) or args[key] < 0:
+                    raise CaseFailure(f"args.{key} falta o no es un entero >= 0")
+            return column.dendrogram_cut(other, args["n"], args["k"])
         name = "column_edit_distance" if op == "edit_distance" else "huffman_decode"
         return column.text_op(name, other)
     finally:

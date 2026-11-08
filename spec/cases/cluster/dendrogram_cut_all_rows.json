@@ -1,0 +1,26 @@
+{
+  "spec_version": 1,
+  "id": "cluster/dendrogram_cut_all_rows",
+  "description": "k = n deja cada fila sola",
+  "input": {
+    "dtype": "int64",
+    "values": [0, 2, 4]
+  },
+  "input2": {
+    "dtype": "int64",
+    "values": [1, 3, 5]
+  },
+  "args": {
+    "n": 4,
+    "k": 4
+  },
+  "op": "dendrogram_cut",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int64",
+        "values": [0, 1, 2, 3]
+      }
+    ]
+  }
+}

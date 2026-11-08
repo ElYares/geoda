@@ -1,7 +1,8 @@
 //! Binding de Python para geoda: `version`, `column_len`, `median`, `percentile` y los
 //! estadisticos escalares (`count`, `sum`, `min`, `max`, `mean`, `var`, `std`, `corr`), `histogram`
 //! y `group_aggregate` (la base de `geoda.group_by`), la clase `Graph` (fase 4) y el texto de la fase 5 (`edit_distance`, `dedupe`, `lis`,
-//! `huffman_encode` y `huffman_decode`).
+//! `huffman_encode` y `huffman_decode`), el clustering de la fase 6 (`kmeans`,
+//! `hierarchical` y `cut_tree`).
 //!
 //! Todas las funciones numericas aceptan una lista o cualquier objeto con el protocolo Arrow
 //! `PyCapsule` (`__arrow_c_array__`): `pyarrow`, `polars`, `pandas` con Arrow... (S10). Los
@@ -19,8 +20,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList};
 
 use geoda_algo::{
-    Huffman, Method, Network, Value, dedupe_column, edit_distance_columns, frequencies,
-    huffman_from_counts, lis_column, median_column, percentile_column,
+    Huffman, KMeansParams, Method, Network, Value, cut_merges, dedupe_column,
+    edit_distance_columns, frequencies, huffman_from_counts, kmeans_columns, lis_column,
+    median_column, percentile_column, single_linkage_columns,
 };
 use geoda_core::interop::arrow_c::{ArrowArray, ArrowSchema, import_column};
 use geoda_core::{Column, DataType, Error, PrimitiveBuilder, Utf8Builder};
@@ -452,6 +454,96 @@ fn dedupe<'py>(
     Ok(out)
 }
 
+/// Lista de columnas de entrada (una matriz): cada elemento es una lista de numeros o una columna
+/// Arrow numerica. Sin nulos ni `NaN`.
+fn matrix_columns(columns: &Bound<'_, PyAny>) -> PyResult<Vec<Column>> {
+    columns
+        .try_iter()?
+        .map(|item| input_column(&item?))
+        .collect()
+}
+
+/// K-means con inicializacion k-means++. `columns` es una lista de columnas (una por variable);
+/// `seed` fija el azar, asi que la misma entrada, `k` y semilla dan el mismo resultado. Devuelve
+/// `{"labels": [int], "centroids": [[float]], "inertia": float, "iterations": int}`: el grupo de
+/// cada fila, `k` centroides de una fila de valores por variable, la suma de distancias al
+/// cuadrado a su centroide y las iteraciones hechas.
+///
+/// # Errors
+/// `ValueError` si hay `None` o `NaN`, las columnas miden distinto, `k` es 0 o mayor que las
+/// filas, o `max_iter`/`tol` no valen; `TypeError` como en `median`.
+#[pyfunction]
+#[pyo3(signature = (columns, k, seed=0, max_iter=100, tol=1e-4))]
+fn kmeans<'py>(
+    py: Python<'py>,
+    columns: &Bound<'py, PyAny>,
+    k: usize,
+    seed: u64,
+    max_iter: usize,
+    tol: f64,
+) -> PyResult<Bound<'py, PyDict>> {
+    let owned = matrix_columns(columns)?;
+    let refs: Vec<&Column> = owned.iter().collect();
+    let params = KMeansParams {
+        k,
+        max_iter,
+        tol,
+        seed,
+    };
+    let result = kmeans_columns(&refs, params).map_err(|e| value_error(&e))?;
+    let out = PyDict::new(py);
+    out.set_item("labels", result.labels)?;
+    let centroids: Vec<Vec<f64>> = result
+        .centroids
+        .chunks(result.dims)
+        .map(<[f64]>::to_vec)
+        .collect();
+    out.set_item("centroids", centroids)?;
+    out.set_item("inertia", result.inertia)?;
+    out.set_item("iterations", result.iterations)?;
+    Ok(out)
+}
+
+/// Dendrograma de enlace simple (clustering jerarquico con distancia euclidiana) de una lista de
+/// columnas, hasta 5000 filas. Devuelve `{"n": int, "left": [int], "right": [int], "height":
+/// [float], "size": [int]}` con `n - 1` uniones: los grupos `0..n` son las filas y la union `s`
+/// crea el grupo `n + s`.
+///
+/// # Errors
+/// `ValueError` como en `kmeans`, o si hay mas de 5000 filas.
+#[pyfunction]
+fn hierarchical<'py>(py: Python<'py>, columns: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyDict>> {
+    let owned = matrix_columns(columns)?;
+    let refs: Vec<&Column> = owned.iter().collect();
+    let dendrogram = single_linkage_columns(&refs).map_err(|e| value_error(&e))?;
+    let out = PyDict::new(py);
+    out.set_item("n", dendrogram.n)?;
+    out.set_item("left", dendrogram.left)?;
+    out.set_item("right", dendrogram.right)?;
+    out.set_item("height", dendrogram.height)?;
+    out.set_item("size", dendrogram.size)?;
+    Ok(out)
+}
+
+/// Corta en `k` grupos un dendrograma (el `dict` de `hierarchical`). Devuelve el grupo (`0..k`) de
+/// cada fila, numerados por la primera fila en que aparece cada uno.
+///
+/// # Errors
+/// `ValueError` si `k` es 0 o mayor que `n`, o las uniones no son validas; `KeyError` si falta una
+/// clave del `dict`.
+#[pyfunction]
+fn cut_tree(dendrogram: &Bound<'_, PyDict>, k: usize) -> PyResult<Vec<usize>> {
+    let get = |key: &str| -> PyResult<Bound<'_, PyAny>> {
+        dendrogram
+            .get_item(key)?
+            .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(key.to_string()))
+    };
+    let n: usize = get("n")?.extract()?;
+    let (left, right): (Vec<usize>, Vec<usize>) =
+        (get("left")?.extract()?, get("right")?.extract()?);
+    cut_merges(n, &left, &right, k).map_err(|e| value_error(&e))
+}
+
 /// Subsecuencia estrictamente creciente mas larga (LIS) de una lista de numeros o una columna
 /// Arrow numerica. Devuelve `{"length": int, "indices": [int]}` con las posiciones de sus
 /// elementos, de menor a mayor.
@@ -654,6 +746,9 @@ fn _geoda(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(edit_distance, m)?)?;
     m.add_function(wrap_pyfunction!(dedupe, m)?)?;
     m.add_function(wrap_pyfunction!(lis, m)?)?;
+    m.add_function(wrap_pyfunction!(kmeans, m)?)?;
+    m.add_function(wrap_pyfunction!(hierarchical, m)?)?;
+    m.add_function(wrap_pyfunction!(cut_tree, m)?)?;
     m.add_function(wrap_pyfunction!(huffman_encode, m)?)?;
     m.add_function(wrap_pyfunction!(huffman_decode, m)?)?;
     m.add_class::<Graph>()?;

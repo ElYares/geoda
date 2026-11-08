@@ -1,0 +1,15 @@
+{
+  "spec_version": 1,
+  "id": "cluster/error_hierarchical_null",
+  "description": "un nulo es INVALID_ARGUMENT",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, null]
+    }
+  ],
+  "op": "hierarchical",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

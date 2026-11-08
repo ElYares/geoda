@@ -151,6 +151,56 @@ static void prueba_texto(void) {
     geoda_column_free(valores);
 }
 
+/* Clustering: k-means y dendrograma desde una lista de columnas; los errores dejan los `out` en NULL. */
+static void prueba_cluster(void) {
+    const double xs[] = {0.0, 0.0, 10.0, 10.0}, ys[] = {0.0, 1.0, 10.0, 11.0};
+    struct GeodaColumn *x = columna_plana("g", xs, 4), *y = columna_plana("g", ys, 4);
+    const struct GeodaColumn *matriz[] = {x, y};
+    struct GeodaColumn *etiquetas = (struct GeodaColumn *)1, *centroides = (struct GeodaColumn *)1;
+    double inercia = -1.0;
+    int64_t iteraciones = -1;
+    CHECK(geoda_kmeans(matriz, 2, 2, 100, 1e-4, 1, &etiquetas, &centroides, &inercia,
+                       &iteraciones) == GEODA_OK);
+    CHECK(geoda_column_len(etiquetas) == 4 && geoda_column_len(centroides) == 4);
+    CHECK(inercia == 1.0 && iteraciones >= 1);
+    geoda_column_free(etiquetas);
+    geoda_column_free(centroides);
+    /* k = 0: INVALID_ARGUMENT, los `out` en NULL y los escalares sin tocar. */
+    etiquetas = centroides = (struct GeodaColumn *)1;
+    inercia = -1.0;
+    CHECK(geoda_kmeans(matriz, 2, 0, 100, 1e-4, 1, &etiquetas, &centroides, &inercia,
+                       &iteraciones) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(etiquetas == NULL && centroides == NULL && inercia == -1.0);
+    CHECK(geoda_kmeans(NULL, 2, 2, 100, 1e-4, 1, &etiquetas, &centroides, &inercia,
+                       &iteraciones) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_kmeans(matriz, 0, 2, 100, 1e-4, 1, &etiquetas, &centroides, &inercia,
+                       &iteraciones) == GEODA_ERR_INVALID_ARGUMENT);
+    const struct GeodaColumn *con_null[] = {x, NULL};
+    CHECK(geoda_kmeans(con_null, 2, 2, 100, 1e-4, 1, &etiquetas, &centroides, &inercia,
+                       &iteraciones) == GEODA_ERR_INVALID_ARGUMENT);
+
+    struct GeodaColumn *izq = (struct GeodaColumn *)1, *der = (struct GeodaColumn *)1;
+    struct GeodaColumn *altura = (struct GeodaColumn *)1, *tamano = (struct GeodaColumn *)1;
+    CHECK(geoda_hierarchical(matriz, 2, &izq, &der, &altura, &tamano) == GEODA_OK);
+    CHECK(geoda_column_len(izq) == 3 && geoda_column_len(altura) == 3);
+    struct GeodaColumn *grupos = (struct GeodaColumn *)1;
+    CHECK(geoda_dendrogram_cut(izq, der, 4, 2, &grupos) == GEODA_OK);
+    CHECK(geoda_column_len(grupos) == 4);
+    geoda_column_free(grupos);
+    grupos = (struct GeodaColumn *)1;
+    CHECK(geoda_dendrogram_cut(izq, der, 4, 0, &grupos) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(grupos == NULL);
+    geoda_column_free(izq);
+    geoda_column_free(der);
+    geoda_column_free(altura);
+    geoda_column_free(tamano);
+    izq = (struct GeodaColumn *)1;
+    CHECK(geoda_hierarchical(NULL, 1, &izq, &der, &altura, &tamano) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(izq == NULL);
+    geoda_column_free(x);
+    geoda_column_free(y);
+}
+
 /* Grafos: se crea uno con pesos, se consulta y se libera; los errores dejan los `out` en NULL. */
 static void prueba_grafo(void) {
     /* 0 -> 1 (4), 0 -> 2 (1), 2 -> 1 (2), 1 -> 3 (1); el nodo 4 queda aislado. */
@@ -401,6 +451,7 @@ int main(void) {
 
     prueba_grafo();
     prueba_texto();
+    prueba_cluster();
 
     if (fallos == 0) {
         puts("smoke: ok");

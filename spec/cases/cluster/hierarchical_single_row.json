@@ -1,0 +1,32 @@
+{
+  "spec_version": 1,
+  "id": "cluster/hierarchical_single_row",
+  "description": "una sola fila no tiene uniones: cuatro columnas vacias",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [3.0]
+    }
+  ],
+  "op": "hierarchical",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int64",
+        "values": []
+      },
+      {
+        "dtype": "int64",
+        "values": []
+      },
+      {
+        "dtype": "float64",
+        "values": []
+      },
+      {
+        "dtype": "int64",
+        "values": []
+      }
+    ]
+  }
+}

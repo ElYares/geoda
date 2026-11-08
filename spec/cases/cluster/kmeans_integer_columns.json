@@ -1,0 +1,34 @@
+{
+  "spec_version": 1,
+  "id": "cluster/kmeans_integer_columns",
+  "description": "las columnas enteras se tratan como numeros",
+  "inputs": [
+    {
+      "dtype": "int32",
+      "values": [0, 0, 10, 10]
+    },
+    {
+      "dtype": "int64",
+      "values": [0, 1, 10, 11]
+    }
+  ],
+  "args": {
+    "k": 2,
+    "seed": 1
+  },
+  "op": "kmeans",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int64",
+        "values": [0, 0, 1, 1]
+      },
+      {
+        "dtype": "float64",
+        "values": [0.0, 0.5, 10.0, 10.5]
+      }
+    ],
+    "inertia": 1.0,
+    "iterations": 2
+  }
+}

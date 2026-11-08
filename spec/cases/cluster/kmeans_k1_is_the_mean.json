@@ -1,0 +1,30 @@
+{
+  "spec_version": 1,
+  "id": "cluster/kmeans_k1_is_the_mean",
+  "description": "con k = 1 el centroide es la media y la inercia la suma de cuadrados",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0, 3.0]
+    }
+  ],
+  "args": {
+    "k": 1,
+    "seed": 0
+  },
+  "op": "kmeans",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int64",
+        "values": [0, 0, 0]
+      },
+      {
+        "dtype": "float64",
+        "values": [2.0]
+      }
+    ],
+    "inertia": 2.0,
+    "iterations": 1
+  }
+}

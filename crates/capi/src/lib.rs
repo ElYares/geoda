@@ -14,8 +14,9 @@ use std::ffi::c_char;
 use std::ptr;
 
 use geoda_algo::{
-    Method, Network, dedupe_column, edit_distance_columns, huffman_decode_column,
-    huffman_encode_column, lis_column, percentile_column,
+    KMeansParams, Method, Network, cut_merges, dedupe_column, edit_distance_columns,
+    huffman_decode_column, huffman_encode_column, kmeans_columns, lis_column, percentile_column,
+    single_linkage_columns,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -1255,6 +1256,198 @@ pub unsafe extern "C" fn geoda_column_dedupe(
             *out_ids = into_handle(ids);
             *out_count = count;
         }
+        Ok(())
+    })
+}
+
+/// Lista de columnas de entrada (una matriz de datos, decision 013 M1): `n_columns` handles
+/// validos en `columns`.
+///
+/// # Safety
+/// `columns` debe ser NULL o apuntar a `n_columns` punteros; cada uno NULL o un handle valido.
+unsafe fn column_list<'a>(
+    columns: *const *const GeodaColumn,
+    n_columns: usize,
+) -> Result<Vec<&'a Column>, CError> {
+    if columns.is_null() || n_columns == 0 {
+        return Err(invalid_argument("columns es NULL o n_columns es 0"));
+    }
+    // SAFETY: no es NULL (arriba) y el llamador garantiza `n_columns` punteros legibles.
+    let pointers = unsafe { std::slice::from_raw_parts(columns, n_columns) };
+    pointers
+        .iter()
+        .enumerate()
+        .map(|(i, &handle)| {
+            // SAFETY: contrato de `column_ref`.
+            unsafe { column_ref(handle, &format!("columns[{i}]")) }
+        })
+        .collect()
+}
+
+/// K-means sobre una matriz de `n_columns` columnas (`Int32`, `Int64` o `Float64`, sin nulos ni
+/// `NaN`), con inicializacion k-means++ y `seed` explicita: la misma entrada, `k` y semilla dan el
+/// mismo resultado. Devuelve **dos columnas nuevas** y dos escalares:
+///
+/// - `*out_labels`: `Int64`, el grupo (`0..k`) de cada fila.
+/// - `*out_centroids`: `Float64`, `k * n_columns` valores **por filas** (el centroide `c` ocupa
+///   las posiciones `c * n_columns .. (c + 1) * n_columns`).
+/// - `*out_inertia`: suma de distancias al cuadrado de cada fila a su centroide.
+/// - `*out_iterations`: iteraciones hechas.
+///
+/// `max_iter` es el tope de iteraciones (al menos 1) y `tol` el movimiento maximo de un centroide
+/// con el que se da por convergido (finito y no negativo).
+///
+/// Si falla, devuelve un codigo negativo, las dos columnas quedan en NULL y los escalares no se
+/// escriben: `GEODA_ERR_INVALID_ARGUMENT` si `columns` es NULL o `n_columns` es 0, hay nulos o
+/// valores no finitos, `k` es 0 o mayor que las filas, o `max_iter`/`tol` no valen;
+/// `GEODA_ERR_LENGTH_MISMATCH` si las columnas miden distinto.
+///
+/// # Safety
+/// `columns` debe apuntar a `n_columns` handles validos; los cuatro `out` deben ser escribibles y
+/// no NULL. Las columnas de salida se liberan con `geoda_column_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_kmeans(
+    columns: *const *const GeodaColumn,
+    n_columns: usize,
+    k: usize,
+    max_iter: usize,
+    tol: f64,
+    seed: u64,
+    out_labels: *mut *mut GeodaColumn,
+    out_centroids: *mut *mut GeodaColumn,
+    out_inertia: *mut f64,
+    out_iterations: *mut i64,
+) -> i32 {
+    guard(|| {
+        if out_inertia.is_null() || out_iterations.is_null() {
+            return Err(invalid_argument("un out es NULL"));
+        }
+        // SAFETY: los `out` son escribibles si no son NULL (contrato).
+        unsafe { null_outs(&[out_labels, out_centroids]) }?;
+        // SAFETY: contrato de `column_list`.
+        let columns = unsafe { column_list(columns, n_columns) }?;
+        let params = KMeansParams {
+            k,
+            max_iter,
+            tol,
+            seed,
+        };
+        let result = kmeans_columns(&columns, params)?;
+        let labels = int64_nullable_column(
+            result
+                .labels
+                .iter()
+                .map(|&l| to_i64(l).map(Some))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter(),
+        )?;
+        let centroids = float64_column(&result.centroids)?;
+        let iterations = to_i64(result.iterations)?;
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_labels = into_handle(labels);
+            *out_centroids = into_handle(centroids);
+            *out_inertia = result.inertia;
+            *out_iterations = iterations;
+        }
+        Ok(())
+    })
+}
+
+/// Dendrograma de enlace simple (clustering jerarquico con distancia euclidiana) de una matriz de
+/// `n_columns` columnas (`Int32`, `Int64` o `Float64`, sin nulos ni `NaN`) de hasta 5000 filas.
+/// Devuelve **cuatro columnas nuevas** con `n - 1` filas cada una (ninguna si hay 1 fila):
+///
+/// - `*out_left` y `*out_right`: `Int64`, los dos grupos que se unen (`left < right`). Los grupos
+///   `0..n` son las filas; la union numero `s` crea el grupo `n + s`.
+/// - `*out_height`: `Float64`, la distancia a la que se unen (no decrece).
+/// - `*out_size`: `Int64`, las filas del grupo resultante.
+///
+/// Si falla, devuelve un codigo negativo y los cuatro `out` quedan en NULL:
+/// `GEODA_ERR_INVALID_ARGUMENT` si `columns` es NULL o `n_columns` es 0, hay nulos o no finitos, o
+/// hay mas de 5000 filas; `GEODA_ERR_LENGTH_MISMATCH` si las columnas miden distinto.
+///
+/// # Safety
+/// `columns` debe apuntar a `n_columns` handles validos; los cuatro `out` deben ser escribibles y
+/// no NULL. Cada columna se libera con `geoda_column_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_hierarchical(
+    columns: *const *const GeodaColumn,
+    n_columns: usize,
+    out_left: *mut *mut GeodaColumn,
+    out_right: *mut *mut GeodaColumn,
+    out_height: *mut *mut GeodaColumn,
+    out_size: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: los `out` son escribibles si no son NULL (contrato).
+        unsafe { null_outs(&[out_left, out_right, out_height, out_size]) }?;
+        // SAFETY: contrato de `column_list`.
+        let columns = unsafe { column_list(columns, n_columns) }?;
+        let dendrogram = single_linkage_columns(&columns)?;
+        let to_column = |values: &[usize]| -> Result<Column, Error> {
+            int64_nullable_column(
+                values
+                    .iter()
+                    .map(|&v| to_i64(v).map(Some))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter(),
+            )
+        };
+        let (left, right, size) = (
+            to_column(&dendrogram.left)?,
+            to_column(&dendrogram.right)?,
+            to_column(&dendrogram.size)?,
+        );
+        let height = float64_column(&dendrogram.height)?;
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_left = into_handle(left);
+            *out_right = into_handle(right);
+            *out_height = into_handle(height);
+            *out_size = into_handle(size);
+        }
+        Ok(())
+    })
+}
+
+/// Corta en `k` grupos un dendrograma de `n` filas dado por sus uniones (`left` y `right`, las dos
+/// `Int64` de `n - 1` filas, como las devuelve `geoda_hierarchical`). Devuelve una columna `Int64`
+/// nueva por `*out_labels` con el grupo (`0..k`) de cada fila, numerados por la primera fila en
+/// que aparece cada uno.
+///
+/// `*out_labels` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y
+/// `*out_labels` queda en NULL: `GEODA_ERR_INVALID_ARGUMENT` si `k` es 0 o mayor que `n`, las
+/// columnas no tienen `n - 1` filas, hay nulos o una union usa un grupo que aun no existe;
+/// `GEODA_ERR_OUT_OF_BOUNDS` si hay un grupo negativo y `GEODA_ERR_TYPE_MISMATCH` si no son `Int64`.
+///
+/// # Safety
+/// `left` y `right` deben ser handles validos y `out_labels` escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_dendrogram_cut(
+    left: *const GeodaColumn,
+    right: *const GeodaColumn,
+    n: usize,
+    k: usize,
+    out_labels: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out_labels` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out_labels]) }?;
+        // SAFETY: contrato de `column_ref`.
+        let (left, right) = unsafe { (column_ref(left, "left")?, column_ref(right, "right")?) };
+        let left = node_indices(left, "left")?;
+        let right = node_indices(right, "right")?;
+        let labels = cut_merges(n, &left, &right, k)?;
+        let labels = int64_nullable_column(
+            labels
+                .iter()
+                .map(|&l| to_i64(l).map(Some))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter(),
+        )?;
+        // SAFETY: `out_labels` es escribible (arriba).
+        unsafe { *out_labels = into_handle(labels) };
         Ok(())
     })
 }

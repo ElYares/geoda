@@ -1,0 +1,23 @@
+{
+  "spec_version": 1,
+  "id": "cluster/error_kmeans_length",
+  "description": "columnas de largos distintos son LENGTH_MISMATCH",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [0.0, 0.0, 10.0, 10.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [1.0]
+    }
+  ],
+  "args": {
+    "k": 1,
+    "seed": 0
+  },
+  "op": "kmeans",
+  "expect": {
+    "error": "LENGTH_MISMATCH"
+  }
+}
