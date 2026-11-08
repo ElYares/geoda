@@ -64,6 +64,21 @@ struct ArrowArray {
 // Agregado de `geoda_column_group_by`: desviacion estandar (usa `ddof`).
 #define GEODA_AGG_STD 6
 
+// Tipo de columna devuelto por `geoda_column_dtype`: booleano.
+#define GEODA_DTYPE_BOOL 0
+
+// Tipo de columna devuelto por `geoda_column_dtype`: entero de 32 bits.
+#define GEODA_DTYPE_INT32 1
+
+// Tipo de columna devuelto por `geoda_column_dtype`: entero de 64 bits.
+#define GEODA_DTYPE_INT64 2
+
+// Tipo de columna devuelto por `geoda_column_dtype`: flotante de 64 bits.
+#define GEODA_DTYPE_FLOAT64 3
+
+// Tipo de columna devuelto por `geoda_column_dtype`: texto UTF-8.
+#define GEODA_DTYPE_UTF8 4
+
 // Exito.
 #define GEODA_OK 0
 
@@ -991,6 +1006,152 @@ int32_t geoda_pca_params(const struct GeodaPca *model,
 // # Safety
 // `model` debe ser NULL o un handle devuelto por `geoda_pca_fit` y no liberado aun.
 void geoda_pca_free(struct GeodaPca *model);
+
+// Crea una columna `Int32` desde `len` valores planos. `validity` es NULL (todo valido) o `len`
+// bytes (1 = valido, 0 = nulo; el valor de un nulo se ignora). `*out` se libera con
+// `geoda_column_free`; si falla queda en NULL.
+//
+// Errores: `GEODA_ERR_INVALID_ARGUMENT` si `values` (con `len > 0`) o `out` es NULL o `values`
+// esta mal alineado, y `GEODA_ERR_OUT_OF_BOUNDS` si `len` bytes no caben en memoria.
+//
+// # Safety
+// `values` debe apuntar a `len` valores legibles (puede ser NULL si `len` es 0), `validity` a `len`
+// bytes legibles o ser NULL, y `out` ser escribible y no NULL.
+int32_t geoda_column_from_i32(const int32_t *values,
+                              size_t len,
+                              const uint8_t *validity,
+                              struct GeodaColumn **out);
+
+// Como `geoda_column_from_i32`, para `Int64`.
+//
+// # Safety
+// Los de `geoda_column_from_i32`.
+int32_t geoda_column_from_i64(const int64_t *values,
+                              size_t len,
+                              const uint8_t *validity,
+                              struct GeodaColumn **out);
+
+// Como `geoda_column_from_i32`, para `Float64`. Un `NaN` es un valor valido, no un nulo.
+//
+// # Safety
+// Los de `geoda_column_from_i32`.
+int32_t geoda_column_from_f64(const double *values,
+                              size_t len,
+                              const uint8_t *validity,
+                              struct GeodaColumn **out);
+
+// Como `geoda_column_from_i32`, para `Bool`: cada valor es un byte (0 = falso, otro = verdadero).
+//
+// # Safety
+// Los de `geoda_column_from_i32`.
+int32_t geoda_column_from_bool(const uint8_t *values,
+                               size_t len,
+                               const uint8_t *validity,
+                               struct GeodaColumn **out);
+
+// Crea una columna `Utf8`. La fila `i` son los bytes `data[offsets[i] .. offsets[i + 1]]`:
+// `offsets` tiene `len + 1` valores, el primero es 0, no decrecen y el ultimo es a lo sumo
+// `data_len`. `validity` es NULL (todo valido) o `len` bytes; el contenido de un nulo se ignora.
+// `*out` se libera con `geoda_column_free`; si falla queda en NULL.
+//
+// Errores: `GEODA_ERR_FFI` si los offsets no cumplen lo anterior o los bytes de una fila no son
+// UTF-8; `GEODA_ERR_INVALID_ARGUMENT` si `offsets` o `out` es NULL, o `data` lo es con
+// `data_len > 0`; `GEODA_ERR_OUT_OF_BOUNDS` si `len + 1` o `data_len` no caben en memoria.
+//
+// # Safety
+// `data` debe apuntar a `data_len` bytes legibles (puede ser NULL si `data_len` es 0), `offsets` a
+// `len + 1` valores legibles, `validity` a `len` bytes o ser NULL, y `out` escribible y no NULL.
+int32_t geoda_column_from_utf8(const uint8_t *data,
+                               size_t data_len,
+                               const int32_t *offsets,
+                               size_t len,
+                               const uint8_t *validity,
+                               struct GeodaColumn **out);
+
+// Tipo de una columna: una de las constantes `GEODA_DTYPE_*`, o un codigo de error negativo si
+// `column` es NULL.
+//
+// # Safety
+// `column` debe ser NULL o un handle valido.
+int32_t geoda_column_dtype(const struct GeodaColumn *column);
+
+// Copia los valores de una columna al arreglo `out` de `capacity` elementos. Escribe `geoda_column_len`
+// valores; el de un nulo es 0 (usa `geoda_column_copy_validity` para distinguirlo). Si `capacity` es
+// menor que la longitud devuelve `GEODA_ERR_OUT_OF_BOUNDS` y **no escribe nada**.
+//
+// Errores: `GEODA_ERR_TYPE_MISMATCH` si la columna no es `Int32`; `GEODA_ERR_INVALID_ARGUMENT` si
+// `column` u `out` (con longitud > 0) es NULL o `out` esta mal alineado.
+//
+// # Safety
+// `column` debe ser un handle valido y `out` apuntar a `capacity` valores escribibles (puede ser
+// NULL si la columna esta vacia).
+int32_t geoda_column_copy_i32(const struct GeodaColumn *column,
+                              int32_t *out,
+                              size_t capacity);
+
+// Como `geoda_column_copy_i32`, para `Int64`.
+//
+// # Safety
+// Los de `geoda_column_copy_i32`.
+int32_t geoda_column_copy_i64(const struct GeodaColumn *column, int64_t *out, size_t capacity);
+
+// Como `geoda_column_copy_i32`, para `Float64`. Un nulo se copia como `0.0`; un `NaN` valido se
+// conserva.
+//
+// # Safety
+// Los de `geoda_column_copy_i32`.
+int32_t geoda_column_copy_f64(const struct GeodaColumn *column, double *out, size_t capacity);
+
+// Como `geoda_column_copy_i32`, para `Bool`: un byte por valor (0 o 1; un nulo es 0).
+//
+// # Safety
+// Los de `geoda_column_copy_i32`.
+int32_t geoda_column_copy_bool(const struct GeodaColumn *column, uint8_t *out, size_t capacity);
+
+// Copia la validez de **cualquier** columna: un byte por fila, 1 si es valida y 0 si es nula. Si
+// `capacity` es menor que la longitud devuelve `GEODA_ERR_OUT_OF_BOUNDS` y no escribe nada.
+//
+// # Safety
+// `column` debe ser un handle valido y `out` apuntar a `capacity` bytes escribibles (puede ser NULL
+// si la columna esta vacia).
+int32_t geoda_column_copy_validity(const struct GeodaColumn *column, uint8_t *out, size_t capacity);
+
+// Bytes totales de los textos de una columna `Utf8` (lo que hay que reservar para
+// `geoda_column_copy_utf8`). Un nulo ocupa 0 bytes. Escribe el resultado en `*out`.
+//
+// Errores: `GEODA_ERR_TYPE_MISMATCH` si la columna no es `Utf8`; `GEODA_ERR_INVALID_ARGUMENT` si
+// `column` u `out` es NULL.
+//
+// # Safety
+// `column` debe ser un handle valido y `out` escribible y no NULL.
+int32_t geoda_column_utf8_data_len(const struct GeodaColumn *column, size_t *out);
+
+// Copia una columna `Utf8`: los bytes de todos los textos, uno tras otro, a `data` (de
+// `data_capacity` bytes) y `len + 1` offsets a `offsets` (de `offsets_capacity` valores), de modo
+// que la fila `i` es `data[offsets[i] .. offsets[i + 1]]`. Un nulo es una fila vacia (usa
+// `geoda_column_copy_validity`). Si una capacidad no alcanza devuelve `GEODA_ERR_OUT_OF_BOUNDS` y
+// no escribe nada.
+//
+// # Safety
+// `column` debe ser un handle valido; `data` y `offsets` deben apuntar a sus capacidades de
+// elementos escribibles (`data` puede ser NULL si no hay bytes que copiar).
+int32_t geoda_column_copy_utf8(const struct GeodaColumn *column,
+                               uint8_t *data,
+                               size_t data_capacity,
+                               int32_t *offsets,
+                               size_t offsets_capacity);
+
+// Reserva `size` bytes alineados a 8 y devuelve el puntero, o NULL si `size` es 0 o no hay memoria.
+// Para quien embebe geoda sin `malloc` (WebAssembly). Se libera con `geoda_dealloc` y el mismo
+// `size`.
+uint8_t *geoda_alloc(size_t size);
+
+// Libera memoria de `geoda_alloc`. Acepta NULL y `size` 0 (no hacen nada).
+//
+// # Safety
+// `ptr` debe ser NULL o un puntero devuelto por `geoda_alloc(size)` con el mismo `size` y no
+// liberado aun.
+void geoda_dealloc(uint8_t *ptr, size_t size);
 
 // Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 // ya no es valido; liberarlo dos veces es comportamiento indefinido.

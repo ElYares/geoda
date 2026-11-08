@@ -1,0 +1,16 @@
+{
+  "spec_version": 1,
+  "id": "array/bool_with_nulls",
+  "description": "booleanos con nulos",
+  "input": {
+    "dtype": "bool",
+    "values": [true, false, null, true]
+  },
+  "op": "array_roundtrip",
+  "expect": {
+    "dtype": "bool",
+    "values": [true, false, null, true],
+    "null_count": 1,
+    "len": 4
+  }
+}

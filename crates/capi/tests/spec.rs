@@ -14,23 +14,27 @@ use std::ptr;
 
 use geoda::{
     GEODA_AGG_COUNT, GEODA_AGG_MAX, GEODA_AGG_MEAN, GEODA_AGG_MIN, GEODA_AGG_STD, GEODA_AGG_SUM,
-    GEODA_AGG_VAR, GEODA_ERR_ALLOC, GEODA_ERR_FFI, GEODA_ERR_INTERNAL, GEODA_ERR_INVALID_ARGUMENT,
-    GEODA_ERR_LENGTH_MISMATCH, GEODA_ERR_OUT_OF_BOUNDS, GEODA_ERR_PANIC, GEODA_ERR_TYPE_MISMATCH,
-    GEODA_ERR_UNSUPPORTED, GEODA_OK, GeodaColumn, GeodaGraph, GeodaPca, GeodaRegression, GeodaTree,
-    geoda_apriori_itemsets, geoda_apriori_rules, geoda_column_corr, geoda_column_count,
-    geoda_column_dedupe, geoda_column_edit_distance, geoda_column_free, geoda_column_from_arrow,
-    geoda_column_group_by, geoda_column_histogram, geoda_column_len, geoda_column_lis,
-    geoda_column_max_f64, geoda_column_max_i64, geoda_column_mean, geoda_column_median,
-    geoda_column_min_f64, geoda_column_min_i64, geoda_column_null_count, geoda_column_percentile,
-    geoda_column_slice, geoda_column_std, geoda_column_sum_f64, geoda_column_sum_i64,
-    geoda_column_to_arrow, geoda_column_var, geoda_dendrogram_cut, geoda_det, geoda_graph_bfs,
-    geoda_graph_components, geoda_graph_dijkstra, geoda_graph_free, geoda_graph_mst,
-    geoda_graph_new, geoda_graph_topological_order, geoda_hierarchical, geoda_huffman_decode,
-    geoda_huffman_encode, geoda_inverse, geoda_kmeans, geoda_last_error_message, geoda_lstsq,
-    geoda_lu_solve, geoda_matmul, geoda_pca_fit, geoda_pca_free, geoda_pca_params,
-    geoda_pca_transform, geoda_qr, geoda_regression_fit, geoda_regression_free,
-    geoda_regression_params, geoda_regression_predict, geoda_svd, geoda_tree_fit, geoda_tree_free,
-    geoda_tree_node_count, geoda_tree_predict,
+    GEODA_AGG_VAR, GEODA_DTYPE_BOOL, GEODA_DTYPE_FLOAT64, GEODA_DTYPE_INT32, GEODA_DTYPE_INT64,
+    GEODA_DTYPE_UTF8, GEODA_ERR_ALLOC, GEODA_ERR_FFI, GEODA_ERR_INTERNAL,
+    GEODA_ERR_INVALID_ARGUMENT, GEODA_ERR_LENGTH_MISMATCH, GEODA_ERR_OUT_OF_BOUNDS,
+    GEODA_ERR_PANIC, GEODA_ERR_TYPE_MISMATCH, GEODA_ERR_UNSUPPORTED, GEODA_OK, GeodaColumn,
+    GeodaGraph, GeodaPca, GeodaRegression, GeodaTree, geoda_apriori_itemsets, geoda_apriori_rules,
+    geoda_column_copy_bool, geoda_column_copy_f64, geoda_column_copy_i32, geoda_column_copy_i64,
+    geoda_column_copy_utf8, geoda_column_copy_validity, geoda_column_corr, geoda_column_count,
+    geoda_column_dedupe, geoda_column_dtype, geoda_column_edit_distance, geoda_column_free,
+    geoda_column_from_arrow, geoda_column_from_bool, geoda_column_from_f64, geoda_column_from_i32,
+    geoda_column_from_i64, geoda_column_from_utf8, geoda_column_group_by, geoda_column_histogram,
+    geoda_column_len, geoda_column_lis, geoda_column_max_f64, geoda_column_max_i64,
+    geoda_column_mean, geoda_column_median, geoda_column_min_f64, geoda_column_min_i64,
+    geoda_column_null_count, geoda_column_percentile, geoda_column_slice, geoda_column_std,
+    geoda_column_sum_f64, geoda_column_sum_i64, geoda_column_to_arrow, geoda_column_utf8_data_len,
+    geoda_column_var, geoda_dendrogram_cut, geoda_det, geoda_graph_bfs, geoda_graph_components,
+    geoda_graph_dijkstra, geoda_graph_free, geoda_graph_mst, geoda_graph_new,
+    geoda_graph_topological_order, geoda_hierarchical, geoda_huffman_decode, geoda_huffman_encode,
+    geoda_inverse, geoda_kmeans, geoda_last_error_message, geoda_lstsq, geoda_lu_solve,
+    geoda_matmul, geoda_pca_fit, geoda_pca_free, geoda_pca_params, geoda_pca_transform, geoda_qr,
+    geoda_regression_fit, geoda_regression_free, geoda_regression_params, geoda_regression_predict,
+    geoda_svd, geoda_tree_fit, geoda_tree_free, geoda_tree_node_count, geoda_tree_predict,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -499,6 +503,7 @@ fn run_op(op: &str, case: &Value, handle: Handle) -> Result<OpResult, String> {
             run_scalar(op, case, &handle)
         }
         "histogram" => run_histogram(case, &handle),
+        "array_roundtrip" => run_array_roundtrip(&handle),
         "edit_distance" | "huffman_decode" | "dendrogram_cut" => run_pair(op, case, &handle),
         "apriori_itemsets" | "apriori_rules" => run_apriori(op, case, &handle),
         "dedupe" => {
@@ -618,6 +623,98 @@ fn run_apriori(op: &str, case: &Value, handle: &Handle) -> Result<OpResult, Stri
         };
         collect_outs(code, &outs)
     }
+}
+
+/// `array_roundtrip`: lee la columna con los accesores planos (`copy_*`, `copy_validity`) y la
+/// reconstruye con `from_*`. El resultado es la columna reconstruida: debe ser igual a la de entrada.
+fn run_array_roundtrip(handle: &Handle) -> Result<OpResult, String> {
+    // SAFETY: handle valido.
+    let dtype = unsafe { geoda_column_dtype(handle.0) };
+    // SAFETY: handle valido.
+    let len = usize::try_from(unsafe { geoda_column_len(handle.0) }).map_err(|_| "len < 0")?;
+    let mut validity = vec![9_u8; len];
+    // SAFETY: `validity` tiene `len` bytes.
+    let code = unsafe { geoda_column_copy_validity(handle.0, validity.as_mut_ptr(), len) };
+    if code != GEODA_OK {
+        return Ok(Err(code));
+    }
+    if validity.iter().any(|&v| v > 1) {
+        return Err("copy_validity dejo un byte distinto de 0 y 1".into());
+    }
+    let mut out: *mut GeodaColumn = ptr::null_mut();
+    // SAFETY (todos los bloques): los buffers miden `len` (o lo que pide cada funcion) y `out` es
+    // escribible.
+    let code = unsafe {
+        match dtype {
+            GEODA_DTYPE_INT32 => {
+                let mut values = vec![0_i32; len];
+                let code = geoda_column_copy_i32(handle.0, values.as_mut_ptr(), len);
+                if code != GEODA_OK {
+                    return Ok(Err(code));
+                }
+                geoda_column_from_i32(values.as_ptr(), len, validity.as_ptr(), &raw mut out)
+            }
+            GEODA_DTYPE_INT64 => {
+                let mut values = vec![0_i64; len];
+                let code = geoda_column_copy_i64(handle.0, values.as_mut_ptr(), len);
+                if code != GEODA_OK {
+                    return Ok(Err(code));
+                }
+                geoda_column_from_i64(values.as_ptr(), len, validity.as_ptr(), &raw mut out)
+            }
+            GEODA_DTYPE_FLOAT64 => {
+                let mut values = vec![0_f64; len];
+                let code = geoda_column_copy_f64(handle.0, values.as_mut_ptr(), len);
+                if code != GEODA_OK {
+                    return Ok(Err(code));
+                }
+                geoda_column_from_f64(values.as_ptr(), len, validity.as_ptr(), &raw mut out)
+            }
+            GEODA_DTYPE_BOOL => {
+                let mut values = vec![0_u8; len];
+                let code = geoda_column_copy_bool(handle.0, values.as_mut_ptr(), len);
+                if code != GEODA_OK {
+                    return Ok(Err(code));
+                }
+                geoda_column_from_bool(values.as_ptr(), len, validity.as_ptr(), &raw mut out)
+            }
+            GEODA_DTYPE_UTF8 => {
+                let mut total = 0_usize;
+                let code = geoda_column_utf8_data_len(handle.0, &raw mut total);
+                if code != GEODA_OK {
+                    return Ok(Err(code));
+                }
+                let mut data = vec![0_u8; total];
+                let mut offsets = vec![-1_i32; len + 1];
+                let code = geoda_column_copy_utf8(
+                    handle.0,
+                    data.as_mut_ptr(),
+                    total,
+                    offsets.as_mut_ptr(),
+                    len + 1,
+                );
+                if code != GEODA_OK {
+                    return Ok(Err(code));
+                }
+                geoda_column_from_utf8(
+                    data.as_ptr(),
+                    total,
+                    offsets.as_ptr(),
+                    len,
+                    validity.as_ptr(),
+                    &raw mut out,
+                )
+            }
+            other => return Err(format!("dtype desconocido: {other}")),
+        }
+    };
+    if code != GEODA_OK {
+        if !out.is_null() {
+            return Err("la capi fallo pero dejo el out sin poner en NULL".into());
+        }
+        return Ok(Err(code));
+    }
+    Ok(Ok(Outcome::Column(Handle(out))))
 }
 
 /// Operaciones sobre una matriz: `case.inputs` es la lista de columnas (una por variable) y se

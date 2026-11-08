@@ -1,0 +1,16 @@
+{
+  "spec_version": 1,
+  "id": "array/int32_extremes_with_nulls",
+  "description": "limites de int32 y un nulo",
+  "input": {
+    "dtype": "int32",
+    "values": [-2147483648, null, 0, 2147483647]
+  },
+  "op": "array_roundtrip",
+  "expect": {
+    "dtype": "int32",
+    "values": [-2147483648, null, 0, 2147483647],
+    "null_count": 1,
+    "len": 4
+  }
+}

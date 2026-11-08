@@ -1,5 +1,6 @@
 /* Prueba de humo de la C-API: la usa un programa en C, sin nada de Rust. */
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -436,6 +437,56 @@ static void prueba_modelos(void) {
     geoda_column_free(z);
 }
 
+/* Arreglos planos: crear y leer columnas sin Arrow, y la memoria de `geoda_alloc`. */
+static void prueba_arreglos(void) {
+    const double valores[] = {1.5, 99.0, 3.5};
+    const uint8_t validez[] = {1, 0, 1};
+    struct GeodaColumn *col = (struct GeodaColumn *)1;
+    CHECK(geoda_column_from_f64(valores, 3, validez, &col) == GEODA_OK);
+    CHECK(geoda_column_dtype(col) == GEODA_DTYPE_FLOAT64);
+    CHECK(geoda_column_len(col) == 3 && geoda_column_null_count(col) == 1);
+    double leidos[3] = {-1.0, -1.0, -1.0};
+    uint8_t mascara[3] = {9, 9, 9};
+    CHECK(geoda_column_copy_f64(col, leidos, 3) == GEODA_OK);
+    CHECK(geoda_column_copy_validity(col, mascara, 3) == GEODA_OK);
+    CHECK(leidos[0] == 1.5 && leidos[1] == 0.0 && leidos[2] == 3.5);
+    CHECK(mascara[0] == 1 && mascara[1] == 0 && mascara[2] == 1);
+    /* Capacidad corta: OUT_OF_BOUNDS y no escribe. Tipo equivocado: TYPE_MISMATCH. */
+    double corto[2] = {-1.0, -1.0};
+    CHECK(geoda_column_copy_f64(col, corto, 2) == GEODA_ERR_OUT_OF_BOUNDS);
+    CHECK(corto[0] == -1.0 && corto[1] == -1.0);
+    int64_t enteros[3];
+    CHECK(geoda_column_copy_i64(col, enteros, 3) == GEODA_ERR_TYPE_MISMATCH);
+    geoda_column_free(col);
+
+    /* Utf8: "hola" y "" y un nulo. */
+    const uint8_t bytes[] = {'h', 'o', 'l', 'a'};
+    const int32_t offsets[] = {0, 4, 4, 4};
+    const uint8_t validez_texto[] = {1, 1, 0};
+    CHECK(geoda_column_from_utf8(bytes, 4, offsets, 3, validez_texto, &col) == GEODA_OK);
+    size_t total = 0;
+    CHECK(geoda_column_utf8_data_len(col, &total) == GEODA_OK && total == 4);
+    uint8_t copia[4];
+    int32_t offsets_copia[4];
+    CHECK(geoda_column_copy_utf8(col, copia, 4, offsets_copia, 4) == GEODA_OK);
+    CHECK(memcmp(copia, "hola", 4) == 0 && offsets_copia[3] == 4);
+    geoda_column_free(col);
+    /* Offsets invalidos: FFI y `out` en NULL. */
+    const int32_t malos[] = {0, 9};
+    col = (struct GeodaColumn *)1;
+    CHECK(geoda_column_from_utf8(bytes, 4, malos, 1, NULL, &col) == GEODA_ERR_FFI && col == NULL);
+    CHECK(geoda_column_from_f64(NULL, 3, NULL, &col) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_column_dtype(NULL) == GEODA_ERR_INVALID_ARGUMENT);
+
+    /* Memoria reservada por geoda. */
+    CHECK(geoda_alloc(0) == NULL);
+    uint8_t *buffer = geoda_alloc(64);
+    CHECK(buffer != NULL && ((uintptr_t)buffer % 8) == 0);
+    memset(buffer, 0xAB, 64);
+    geoda_dealloc(buffer, 64);
+    geoda_dealloc(NULL, 64);
+}
+
 /* Grafos: se crea uno con pesos, se consulta y se libera; los errores dejan los `out` en NULL. */
 static void prueba_grafo(void) {
     /* 0 -> 1 (4), 0 -> 2 (1), 2 -> 1 (2), 1 -> 3 (1); el nodo 4 queda aislado. */
@@ -686,6 +737,7 @@ int main(void) {
 
     prueba_grafo();
     prueba_texto();
+    prueba_arreglos();
     prueba_cluster();
     prueba_arbol();
     prueba_apriori();

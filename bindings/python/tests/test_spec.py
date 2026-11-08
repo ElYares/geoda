@@ -17,7 +17,7 @@ COLUMNS_OPS = ("histogram", "group_by")
 GRAPH_OPS = ("graph_bfs", "graph_components", "graph_topological_order", "graph_dijkstra", "graph_mst")
 TEXT_OPS = ("edit_distance", "lis", "huffman_encode", "huffman_decode", "dedupe", "dendrogram_cut", "apriori_itemsets", "apriori_rules")
 MATRIX_OPS = ("kmeans", "hierarchical", "tree_fit_predict", "matmul", "lu_solve", "det", "inverse", "qr", "svd", "lstsq", "regression_fit_predict", "pca_fit_transform")
-OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile") + SCALAR_OPS + COLUMNS_OPS + TEXT_OPS + MATRIX_OPS
+OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile", "array_roundtrip") + SCALAR_OPS + COLUMNS_OPS + TEXT_OPS + MATRIX_OPS
 
 
 class CaseFailure(Exception):
@@ -58,6 +58,8 @@ def run_case(case):
                     if "p" not in case.get("args", {}):
                         raise CaseFailure("args.p falta")
                     value, code = column.percentile(capi.parse_float(case["args"]["p"]))
+            elif op == "array_roundtrip":
+                result, code = column.array_roundtrip()
             elif op in SCALAR_OPS:
                 value, integer, code = _run_scalar(op, case, column)
             elif op in COLUMNS_OPS:

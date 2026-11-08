@@ -1,0 +1,16 @@
+{
+  "spec_version": 1,
+  "id": "array/utf8_empty_null_and_non_ascii",
+  "description": "cadenas vacias, un nulo y texto no ASCII: una cadena vacia no es un nulo",
+  "input": {
+    "dtype": "utf8",
+    "values": ["", "ñandú", null, "日本語", "hola"]
+  },
+  "op": "array_roundtrip",
+  "expect": {
+    "dtype": "utf8",
+    "values": ["", "ñandú", null, "日本語", "hola"],
+    "null_count": 1,
+    "len": 5
+  }
+}

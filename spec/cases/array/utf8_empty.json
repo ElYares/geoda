@@ -1,0 +1,16 @@
+{
+  "spec_version": 1,
+  "id": "array/utf8_empty",
+  "description": "una columna Utf8 vacia sobrevive a los accesores",
+  "input": {
+    "dtype": "utf8",
+    "values": []
+  },
+  "op": "array_roundtrip",
+  "expect": {
+    "dtype": "utf8",
+    "values": [],
+    "null_count": 0,
+    "len": 0
+  }
+}

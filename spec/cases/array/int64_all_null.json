@@ -1,0 +1,16 @@
+{
+  "spec_version": 1,
+  "id": "array/int64_all_null",
+  "description": "una columna entera toda nula",
+  "input": {
+    "dtype": "int64",
+    "values": [null, null, null]
+  },
+  "op": "array_roundtrip",
+  "expect": {
+    "dtype": "int64",
+    "values": [null, null, null],
+    "null_count": 3,
+    "len": 3
+  }
+}

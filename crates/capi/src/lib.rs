@@ -23,7 +23,7 @@ use geoda_algo::{
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
 };
-use geoda_core::{Column, Error, Field, PrimitiveBuilder};
+use geoda_core::{BoolBuilder, Column, DataType, Error, Field, PrimitiveBuilder, Utf8Builder};
 use geoda_stats::{
     GroupOp, Number, correlation_columns_with_workers, count_column, group_by_with_workers,
     histogram_column_with_workers, max_column_with_workers, mean_column_with_workers,
@@ -57,6 +57,17 @@ pub const GEODA_AGG_MEAN: i32 = 4;
 pub const GEODA_AGG_VAR: i32 = 5;
 /// Agregado de `geoda_column_group_by`: desviacion estandar (usa `ddof`).
 pub const GEODA_AGG_STD: i32 = 6;
+
+/// Tipo de columna devuelto por `geoda_column_dtype`: booleano.
+pub const GEODA_DTYPE_BOOL: i32 = 0;
+/// Tipo de columna devuelto por `geoda_column_dtype`: entero de 32 bits.
+pub const GEODA_DTYPE_INT32: i32 = 1;
+/// Tipo de columna devuelto por `geoda_column_dtype`: entero de 64 bits.
+pub const GEODA_DTYPE_INT64: i32 = 2;
+/// Tipo de columna devuelto por `geoda_column_dtype`: flotante de 64 bits.
+pub const GEODA_DTYPE_FLOAT64: i32 = 3;
+/// Tipo de columna devuelto por `geoda_column_dtype`: texto UTF-8.
+pub const GEODA_DTYPE_UTF8: i32 = 4;
 
 /// Columna de geoda. Opaca para C: solo se maneja por puntero.
 pub struct GeodaColumn(Column);
@@ -2221,6 +2232,587 @@ pub unsafe extern "C" fn geoda_pca_free(model: *mut GeodaPca) {
     });
 }
 
+/// Vista de `len` elementos de tipo `T` en `ptr`. Con `len == 0` el puntero puede ser NULL.
+///
+/// Se rechaza un puntero NULL o mal alineado y un tamano en bytes que exceda `isize::MAX`: pasarlo
+/// a `from_raw_parts` seria comportamiento indefinido.
+///
+/// # Safety
+/// Con `len > 0`, `ptr` debe apuntar a `len` elementos de `T` legibles durante `'a`.
+unsafe fn plain_slice<'a, T>(ptr: *const T, len: usize, name: &str) -> Result<&'a [T], CError> {
+    if len == 0 {
+        return Ok(&[]);
+    }
+    check_plain::<T>(ptr, len, name)?;
+    // SAFETY: no es NULL, esta alineado y el tamano cabe en `isize` (arriba); que apunte a `len`
+    // elementos validos es contrato.
+    Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
+}
+
+/// Como `plain_slice`, para escribir.
+///
+/// # Safety
+/// Con `len > 0`, `ptr` debe apuntar a `len` elementos de `T` escribibles durante `'a`.
+unsafe fn plain_slice_mut<'a, T>(
+    ptr: *mut T,
+    len: usize,
+    name: &str,
+) -> Result<&'a mut [T], CError> {
+    if len == 0 {
+        return Ok(&mut []);
+    }
+    check_plain::<T>(ptr.cast_const(), len, name)?;
+    // SAFETY: igual que `plain_slice`; la escritura es contrato.
+    Ok(unsafe { std::slice::from_raw_parts_mut(ptr, len) })
+}
+
+fn check_plain<T>(ptr: *const T, len: usize, name: &str) -> Result<(), CError> {
+    if ptr.is_null() {
+        return Err(invalid_argument(&format!("{name} es NULL")));
+    }
+    if !(ptr as usize).is_multiple_of(std::mem::align_of::<T>()) {
+        return Err(invalid_argument(&format!("{name} no esta alineado")));
+    }
+    let fits = len
+        .checked_mul(std::mem::size_of::<T>())
+        .is_some_and(|bytes| isize::try_from(bytes).is_ok());
+    if !fits {
+        return Err(
+            Error::OutOfBounds(format!("{name}: {len} elementos no caben en memoria")).into(),
+        );
+    }
+    Ok(())
+}
+
+/// Validez de entrada (1 = valido, 0 = nulo) de `len` filas, o todo valido si `validity` es NULL.
+///
+/// # Safety
+/// Con `validity` no NULL y `len > 0`, debe apuntar a `len` bytes legibles.
+unsafe fn validity_of<'a>(validity: *const u8, len: usize) -> Result<Option<&'a [u8]>, CError> {
+    if validity.is_null() {
+        return Ok(None);
+    }
+    // SAFETY: contrato de `plain_slice`.
+    unsafe { plain_slice(validity, len, "validity") }.map(Some)
+}
+
+fn is_valid(validity: Option<&[u8]>, i: usize) -> bool {
+    validity.is_none_or(|v| v[i] != 0)
+}
+
+/// Escribe en `*out` el handle de `column`.
+///
+/// # Safety
+/// `out` debe ser escribible y no NULL.
+unsafe fn put_column(out: *mut *mut GeodaColumn, column: Column) {
+    // SAFETY: contrato.
+    unsafe { *out = into_handle(column) };
+}
+
+/// Crea una columna `Int32` desde `len` valores planos. `validity` es NULL (todo valido) o `len`
+/// bytes (1 = valido, 0 = nulo; el valor de un nulo se ignora). `*out` se libera con
+/// `geoda_column_free`; si falla queda en NULL.
+///
+/// Errores: `GEODA_ERR_INVALID_ARGUMENT` si `values` (con `len > 0`) o `out` es NULL o `values`
+/// esta mal alineado, y `GEODA_ERR_OUT_OF_BOUNDS` si `len` bytes no caben en memoria.
+///
+/// # Safety
+/// `values` debe apuntar a `len` valores legibles (puede ser NULL si `len` es 0), `validity` a `len`
+/// bytes legibles o ser NULL, y `out` ser escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_from_i32(
+    values: *const i32,
+    len: usize,
+    validity: *const u8,
+    out: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out]) }?;
+        // SAFETY: contratos de `plain_slice` y `validity_of`.
+        let (values, validity) = unsafe {
+            (
+                plain_slice(values, len, "values")?,
+                validity_of(validity, len)?,
+            )
+        };
+        let mut builder = PrimitiveBuilder::<i32>::new();
+        for (i, &v) in values.iter().enumerate() {
+            if is_valid(validity, i) {
+                builder.append(v);
+            } else {
+                builder.append_null();
+            }
+        }
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { put_column(out, builder.finish()?) };
+        Ok(())
+    })
+}
+
+/// Como `geoda_column_from_i32`, para `Int64`.
+///
+/// # Safety
+/// Los de `geoda_column_from_i32`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_from_i64(
+    values: *const i64,
+    len: usize,
+    validity: *const u8,
+    out: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out]) }?;
+        // SAFETY: contratos de `plain_slice` y `validity_of`.
+        let (values, validity) = unsafe {
+            (
+                plain_slice(values, len, "values")?,
+                validity_of(validity, len)?,
+            )
+        };
+        let mut builder = PrimitiveBuilder::<i64>::new();
+        for (i, &v) in values.iter().enumerate() {
+            if is_valid(validity, i) {
+                builder.append(v);
+            } else {
+                builder.append_null();
+            }
+        }
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { put_column(out, builder.finish()?) };
+        Ok(())
+    })
+}
+
+/// Como `geoda_column_from_i32`, para `Float64`. Un `NaN` es un valor valido, no un nulo.
+///
+/// # Safety
+/// Los de `geoda_column_from_i32`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_from_f64(
+    values: *const f64,
+    len: usize,
+    validity: *const u8,
+    out: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out]) }?;
+        // SAFETY: contratos de `plain_slice` y `validity_of`.
+        let (values, validity) = unsafe {
+            (
+                plain_slice(values, len, "values")?,
+                validity_of(validity, len)?,
+            )
+        };
+        let mut builder = PrimitiveBuilder::<f64>::new();
+        for (i, &v) in values.iter().enumerate() {
+            if is_valid(validity, i) {
+                builder.append(v);
+            } else {
+                builder.append_null();
+            }
+        }
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { put_column(out, builder.finish()?) };
+        Ok(())
+    })
+}
+
+/// Como `geoda_column_from_i32`, para `Bool`: cada valor es un byte (0 = falso, otro = verdadero).
+///
+/// # Safety
+/// Los de `geoda_column_from_i32`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_from_bool(
+    values: *const u8,
+    len: usize,
+    validity: *const u8,
+    out: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out]) }?;
+        // SAFETY: contratos de `plain_slice` y `validity_of`.
+        let (values, validity) = unsafe {
+            (
+                plain_slice(values, len, "values")?,
+                validity_of(validity, len)?,
+            )
+        };
+        let mut builder = BoolBuilder::new();
+        for (i, &v) in values.iter().enumerate() {
+            if is_valid(validity, i) {
+                builder.append(v != 0);
+            } else {
+                builder.append_null();
+            }
+        }
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { put_column(out, builder.finish()?) };
+        Ok(())
+    })
+}
+
+/// Crea una columna `Utf8`. La fila `i` son los bytes `data[offsets[i] .. offsets[i + 1]]`:
+/// `offsets` tiene `len + 1` valores, el primero es 0, no decrecen y el ultimo es a lo sumo
+/// `data_len`. `validity` es NULL (todo valido) o `len` bytes; el contenido de un nulo se ignora.
+/// `*out` se libera con `geoda_column_free`; si falla queda en NULL.
+///
+/// Errores: `GEODA_ERR_FFI` si los offsets no cumplen lo anterior o los bytes de una fila no son
+/// UTF-8; `GEODA_ERR_INVALID_ARGUMENT` si `offsets` o `out` es NULL, o `data` lo es con
+/// `data_len > 0`; `GEODA_ERR_OUT_OF_BOUNDS` si `len + 1` o `data_len` no caben en memoria.
+///
+/// # Safety
+/// `data` debe apuntar a `data_len` bytes legibles (puede ser NULL si `data_len` es 0), `offsets` a
+/// `len + 1` valores legibles, `validity` a `len` bytes o ser NULL, y `out` escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_from_utf8(
+    data: *const u8,
+    data_len: usize,
+    offsets: *const i32,
+    len: usize,
+    validity: *const u8,
+    out: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out]) }?;
+        let offsets_len = len
+            .checked_add(1)
+            .ok_or_else(|| Error::OutOfBounds("len + 1 desborda".to_string()))?;
+        // SAFETY: contratos de `plain_slice` y `validity_of`.
+        let (data, offsets, validity) = unsafe {
+            (
+                plain_slice(data, data_len, "data")?,
+                plain_slice(offsets, offsets_len, "offsets")?,
+                validity_of(validity, len)?,
+            )
+        };
+        if offsets[0] != 0 {
+            return Err(Error::Ffi(format!("offsets[0] debe ser 0, no {}", offsets[0])).into());
+        }
+        let mut builder = Utf8Builder::new();
+        for i in 0..len {
+            let (from, to) = (offsets[i], offsets[i + 1]);
+            let (from, to) = (
+                usize::try_from(from).map_err(|_| Error::Ffi(format!("offsets[{i}] negativo")))?,
+                usize::try_from(to)
+                    .map_err(|_| Error::Ffi(format!("offsets[{}] negativo", i + 1)))?,
+            );
+            if from > to || to > data.len() {
+                return Err(Error::Ffi(format!(
+                    "offsets[{i}..={}] = {from}..{to} no cabe en {} bytes",
+                    i + 1,
+                    data.len()
+                ))
+                .into());
+            }
+            if is_valid(validity, i) {
+                let text = std::str::from_utf8(&data[from..to])
+                    .map_err(|e| Error::Ffi(format!("la fila {i} no es UTF-8: {e}")))?;
+                builder.append(text)?;
+            } else {
+                builder.append_null();
+            }
+        }
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { put_column(out, builder.finish()?) };
+        Ok(())
+    })
+}
+
+/// Tipo de una columna: una de las constantes `GEODA_DTYPE_*`, o un codigo de error negativo si
+/// `column` es NULL.
+///
+/// # Safety
+/// `column` debe ser NULL o un handle valido.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_dtype(column: *const GeodaColumn) -> i32 {
+    let mut dtype = 0;
+    let code = guard(|| {
+        // SAFETY: contrato de `column_ref`.
+        dtype = match unsafe { column_ref(column, "column") }?.dtype() {
+            DataType::Bool => GEODA_DTYPE_BOOL,
+            DataType::Int32 => GEODA_DTYPE_INT32,
+            DataType::Int64 => GEODA_DTYPE_INT64,
+            DataType::Float64 => GEODA_DTYPE_FLOAT64,
+            DataType::Utf8 => GEODA_DTYPE_UTF8,
+        };
+        Ok(())
+    });
+    if code == GEODA_OK { dtype } else { code }
+}
+
+/// Copia los valores de una columna al arreglo `out` de `capacity` elementos. Escribe `geoda_column_len`
+/// valores; el de un nulo es 0 (usa `geoda_column_copy_validity` para distinguirlo). Si `capacity` es
+/// menor que la longitud devuelve `GEODA_ERR_OUT_OF_BOUNDS` y **no escribe nada**.
+///
+/// Errores: `GEODA_ERR_TYPE_MISMATCH` si la columna no es `Int32`; `GEODA_ERR_INVALID_ARGUMENT` si
+/// `column` u `out` (con longitud > 0) es NULL o `out` esta mal alineado.
+///
+/// # Safety
+/// `column` debe ser un handle valido y `out` apuntar a `capacity` valores escribibles (puede ser
+/// NULL si la columna esta vacia).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_copy_i32(
+    column: *const GeodaColumn,
+    out: *mut i32,
+    capacity: usize,
+) -> i32 {
+    guard(|| {
+        // SAFETY: contrato de `column_ref`.
+        let column = unsafe { column_ref(column, "column") }?;
+        let values = column.values::<i32>()?;
+        // SAFETY: contrato de `plain_slice_mut`.
+        let out = unsafe { copy_target(out, capacity, column.len()) }?;
+        for (i, slot) in out.iter_mut().enumerate() {
+            *slot = if column.is_null(i)? { 0 } else { values[i] };
+        }
+        Ok(())
+    })
+}
+
+/// Como `geoda_column_copy_i32`, para `Int64`.
+///
+/// # Safety
+/// Los de `geoda_column_copy_i32`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_copy_i64(
+    column: *const GeodaColumn,
+    out: *mut i64,
+    capacity: usize,
+) -> i32 {
+    guard(|| {
+        // SAFETY: contrato de `column_ref`.
+        let column = unsafe { column_ref(column, "column") }?;
+        let values = column.values::<i64>()?;
+        // SAFETY: contrato de `plain_slice_mut`.
+        let out = unsafe { copy_target(out, capacity, column.len()) }?;
+        for (i, slot) in out.iter_mut().enumerate() {
+            *slot = if column.is_null(i)? { 0 } else { values[i] };
+        }
+        Ok(())
+    })
+}
+
+/// Como `geoda_column_copy_i32`, para `Float64`. Un nulo se copia como `0.0`; un `NaN` valido se
+/// conserva.
+///
+/// # Safety
+/// Los de `geoda_column_copy_i32`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_copy_f64(
+    column: *const GeodaColumn,
+    out: *mut f64,
+    capacity: usize,
+) -> i32 {
+    guard(|| {
+        // SAFETY: contrato de `column_ref`.
+        let column = unsafe { column_ref(column, "column") }?;
+        let values = column.values::<f64>()?;
+        // SAFETY: contrato de `plain_slice_mut`.
+        let out = unsafe { copy_target(out, capacity, column.len()) }?;
+        for (i, slot) in out.iter_mut().enumerate() {
+            *slot = if column.is_null(i)? { 0.0 } else { values[i] };
+        }
+        Ok(())
+    })
+}
+
+/// Como `geoda_column_copy_i32`, para `Bool`: un byte por valor (0 o 1; un nulo es 0).
+///
+/// # Safety
+/// Los de `geoda_column_copy_i32`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_copy_bool(
+    column: *const GeodaColumn,
+    out: *mut u8,
+    capacity: usize,
+) -> i32 {
+    guard(|| {
+        // SAFETY: contrato de `column_ref`.
+        let column = unsafe { column_ref(column, "column") }?;
+        if column.dtype() != DataType::Bool {
+            return Err(
+                Error::TypeMismatch(format!("se esperaba Bool, no {:?}", column.dtype())).into(),
+            );
+        }
+        // SAFETY: contrato de `plain_slice_mut`.
+        let out = unsafe { copy_target(out, capacity, column.len()) }?;
+        for (i, slot) in out.iter_mut().enumerate() {
+            *slot = u8::from(!column.is_null(i)? && column.bool_value(i)?);
+        }
+        Ok(())
+    })
+}
+
+/// Copia la validez de **cualquier** columna: un byte por fila, 1 si es valida y 0 si es nula. Si
+/// `capacity` es menor que la longitud devuelve `GEODA_ERR_OUT_OF_BOUNDS` y no escribe nada.
+///
+/// # Safety
+/// `column` debe ser un handle valido y `out` apuntar a `capacity` bytes escribibles (puede ser NULL
+/// si la columna esta vacia).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_copy_validity(
+    column: *const GeodaColumn,
+    out: *mut u8,
+    capacity: usize,
+) -> i32 {
+    guard(|| {
+        // SAFETY: contrato de `column_ref`.
+        let column = unsafe { column_ref(column, "column") }?;
+        // SAFETY: contrato de `plain_slice_mut`.
+        let out = unsafe { copy_target(out, capacity, column.len()) }?;
+        for (i, slot) in out.iter_mut().enumerate() {
+            *slot = u8::from(!column.is_null(i)?);
+        }
+        Ok(())
+    })
+}
+
+/// Bytes totales de los textos de una columna `Utf8` (lo que hay que reservar para
+/// `geoda_column_copy_utf8`). Un nulo ocupa 0 bytes. Escribe el resultado en `*out`.
+///
+/// Errores: `GEODA_ERR_TYPE_MISMATCH` si la columna no es `Utf8`; `GEODA_ERR_INVALID_ARGUMENT` si
+/// `column` u `out` es NULL.
+///
+/// # Safety
+/// `column` debe ser un handle valido y `out` escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_utf8_data_len(
+    column: *const GeodaColumn,
+    out: *mut usize,
+) -> i32 {
+    guard(|| {
+        if out.is_null() {
+            return Err(invalid_argument("out es NULL"));
+        }
+        // SAFETY: contrato de `column_ref`.
+        let column = unsafe { column_ref(column, "column") }?;
+        expect_utf8(column)?;
+        let mut total = 0usize;
+        for i in 0..column.len() {
+            if !column.is_null(i)? {
+                total += column.str_value(i)?.len();
+            }
+        }
+        // SAFETY: `out` no es NULL (arriba) y el llamador lo garantiza escribible.
+        unsafe { *out = total };
+        Ok(())
+    })
+}
+
+/// Copia una columna `Utf8`: los bytes de todos los textos, uno tras otro, a `data` (de
+/// `data_capacity` bytes) y `len + 1` offsets a `offsets` (de `offsets_capacity` valores), de modo
+/// que la fila `i` es `data[offsets[i] .. offsets[i + 1]]`. Un nulo es una fila vacia (usa
+/// `geoda_column_copy_validity`). Si una capacidad no alcanza devuelve `GEODA_ERR_OUT_OF_BOUNDS` y
+/// no escribe nada.
+///
+/// # Safety
+/// `column` debe ser un handle valido; `data` y `offsets` deben apuntar a sus capacidades de
+/// elementos escribibles (`data` puede ser NULL si no hay bytes que copiar).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_copy_utf8(
+    column: *const GeodaColumn,
+    data: *mut u8,
+    data_capacity: usize,
+    offsets: *mut i32,
+    offsets_capacity: usize,
+) -> i32 {
+    guard(|| {
+        // SAFETY: contrato de `column_ref`.
+        let column = unsafe { column_ref(column, "column") }?;
+        expect_utf8(column)?;
+        let mut total = 0usize;
+        for i in 0..column.len() {
+            if !column.is_null(i)? {
+                total += column.str_value(i)?.len();
+            }
+        }
+        // SAFETY: contrato de `copy_target`.
+        let offsets = unsafe { copy_target(offsets, offsets_capacity, column.len() + 1) }?;
+        // SAFETY: contrato de `copy_target`.
+        let data = unsafe { copy_target(data, data_capacity, total) }?;
+        let (mut at, mut next) = (0usize, 0usize);
+        offsets[0] = 0;
+        for i in 0..column.len() {
+            if !column.is_null(i)? {
+                let bytes = column.str_value(i)?.as_bytes();
+                data[at..at + bytes.len()].copy_from_slice(bytes);
+                at += bytes.len();
+            }
+            next += 1;
+            offsets[next] = i32::try_from(at)
+                .map_err(|_| Error::OutOfBounds("offset no cabe en i32".into()))?;
+        }
+        Ok(())
+    })
+}
+
+fn expect_utf8(column: &Column) -> Result<(), Error> {
+    if column.dtype() == DataType::Utf8 {
+        Ok(())
+    } else {
+        Err(Error::TypeMismatch(format!(
+            "se esperaba Utf8, no {:?}",
+            column.dtype()
+        )))
+    }
+}
+
+/// Destino de una copia: exige `capacity >= needed` (si no, `OutOfBounds` sin escribir) y devuelve
+/// los primeros `needed` elementos.
+///
+/// # Safety
+/// Con `needed > 0`, `out` debe apuntar a `capacity` elementos escribibles.
+unsafe fn copy_target<'a, T>(
+    out: *mut T,
+    capacity: usize,
+    needed: usize,
+) -> Result<&'a mut [T], CError> {
+    if capacity < needed {
+        return Err(Error::OutOfBounds(format!(
+            "la capacidad {capacity} no alcanza para {needed} valores"
+        ))
+        .into());
+    }
+    // SAFETY: contrato de `plain_slice_mut`.
+    unsafe { plain_slice_mut(out, needed, "out") }
+}
+
+/// Reserva `size` bytes alineados a 8 y devuelve el puntero, o NULL si `size` es 0 o no hay memoria.
+/// Para quien embebe geoda sin `malloc` (WebAssembly). Se libera con `geoda_dealloc` y el mismo
+/// `size`.
+#[unsafe(no_mangle)]
+pub extern "C" fn geoda_alloc(size: usize) -> *mut u8 {
+    if size == 0 {
+        return ptr::null_mut();
+    }
+    match std::alloc::Layout::from_size_align(size, 8) {
+        // SAFETY: el tamano no es 0 (arriba).
+        Ok(layout) => unsafe { std::alloc::alloc(layout) },
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Libera memoria de `geoda_alloc`. Acepta NULL y `size` 0 (no hacen nada).
+///
+/// # Safety
+/// `ptr` debe ser NULL o un puntero devuelto por `geoda_alloc(size)` con el mismo `size` y no
+/// liberado aun.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_dealloc(ptr: *mut u8, size: usize) {
+    if ptr.is_null() || size == 0 {
+        return;
+    }
+    if let Ok(layout) = std::alloc::Layout::from_size_align(size, 8) {
+        // SAFETY: contrato: viene de `geoda_alloc(size)` y no se libero.
+        unsafe { std::alloc::dealloc(ptr, layout) };
+    }
+}
+
 /// Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 /// ya no es valido; liberarlo dos veces es comportamiento indefinido.
 ///
@@ -2805,6 +3397,298 @@ mod tests {
             for column in [from, to, weights] {
                 geoda_column_free(column);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod plain_array_tests {
+    //! Accesores por arreglos planos (decision 015, O1 y O2). Corren tambien bajo Miri: hay `unsafe`.
+    use super::*;
+
+    const NULL_COLUMN: *mut GeodaColumn = ptr::null_mut();
+
+    fn free(column: *mut GeodaColumn) {
+        // SAFETY: handle de la capi sin liberar.
+        unsafe { geoda_column_free(column) };
+    }
+
+    #[test]
+    fn f64_con_nulos_ida_y_vuelta() {
+        let values = [1.5_f64, 99.0, f64::NAN];
+        let validity = [1_u8, 0, 1];
+        let mut column = NULL_COLUMN;
+        // SAFETY: arreglos y `out` validos.
+        unsafe {
+            assert_eq!(
+                geoda_column_from_f64(values.as_ptr(), 3, validity.as_ptr(), &raw mut column),
+                GEODA_OK
+            );
+            assert_eq!(geoda_column_dtype(column), GEODA_DTYPE_FLOAT64);
+            assert_eq!(
+                (geoda_column_len(column), geoda_column_null_count(column)),
+                (3, 1)
+            );
+            let mut out = [-1.0_f64; 3];
+            let mut mask = [9_u8; 3];
+            assert_eq!(geoda_column_copy_f64(column, out.as_mut_ptr(), 3), GEODA_OK);
+            assert_eq!(
+                geoda_column_copy_validity(column, mask.as_mut_ptr(), 3),
+                GEODA_OK
+            );
+            assert_eq!(out[0], 1.5);
+            assert_eq!(out[1], 0.0); // el nulo se copia como 0
+            assert!(out[2].is_nan()); // un NaN valido se conserva
+            assert_eq!(mask, [1, 0, 1]);
+        }
+        free(column);
+    }
+
+    #[test]
+    fn enteros_y_booleanos_ida_y_vuelta() {
+        let mut column = NULL_COLUMN;
+        // SAFETY: arreglos y `out` validos.
+        unsafe {
+            let ints = [i32::MIN, 0, i32::MAX];
+            assert_eq!(
+                geoda_column_from_i32(ints.as_ptr(), 3, ptr::null(), &raw mut column),
+                GEODA_OK
+            );
+            assert_eq!(geoda_column_dtype(column), GEODA_DTYPE_INT32);
+            let mut out = [0_i32; 3];
+            assert_eq!(geoda_column_copy_i32(column, out.as_mut_ptr(), 3), GEODA_OK);
+            assert_eq!(out, ints);
+            free(column);
+
+            let longs = [i64::MIN, 7, i64::MAX];
+            let validity = [1_u8, 1, 0];
+            assert_eq!(
+                geoda_column_from_i64(longs.as_ptr(), 3, validity.as_ptr(), &raw mut column),
+                GEODA_OK
+            );
+            let mut out = [5_i64; 3];
+            assert_eq!(geoda_column_copy_i64(column, out.as_mut_ptr(), 3), GEODA_OK);
+            assert_eq!(out, [i64::MIN, 7, 0]);
+            free(column);
+
+            let flags = [1_u8, 0, 2, 0];
+            let validity = [1_u8, 1, 1, 0];
+            assert_eq!(
+                geoda_column_from_bool(flags.as_ptr(), 4, validity.as_ptr(), &raw mut column),
+                GEODA_OK
+            );
+            assert_eq!(geoda_column_dtype(column), GEODA_DTYPE_BOOL);
+            let mut out = [9_u8; 4];
+            assert_eq!(
+                geoda_column_copy_bool(column, out.as_mut_ptr(), 4),
+                GEODA_OK
+            );
+            assert_eq!(out, [1, 0, 1, 0]);
+            free(column);
+        }
+    }
+
+    #[test]
+    fn utf8_con_vacias_nulos_y_no_ascii() {
+        let data = "hola\u{f1}and\u{fa}".as_bytes(); // "hola" (4 bytes) + "ñandú" (7 bytes)
+        let offsets = [0_i32, 4, 4, 11, 11];
+        let validity = [1_u8, 1, 1, 0];
+        let mut column = NULL_COLUMN;
+        // SAFETY: arreglos y `out` validos.
+        unsafe {
+            assert_eq!(
+                geoda_column_from_utf8(
+                    data.as_ptr(),
+                    data.len(),
+                    offsets.as_ptr(),
+                    4,
+                    validity.as_ptr(),
+                    &raw mut column
+                ),
+                GEODA_OK
+            );
+            assert_eq!(geoda_column_dtype(column), GEODA_DTYPE_UTF8);
+            let mut total = 0_usize;
+            assert_eq!(geoda_column_utf8_data_len(column, &raw mut total), GEODA_OK);
+            assert_eq!(total, 11);
+            let (mut bytes, mut got) = ([0_u8; 11], [-1_i32; 5]);
+            assert_eq!(
+                geoda_column_copy_utf8(column, bytes.as_mut_ptr(), 11, got.as_mut_ptr(), 5),
+                GEODA_OK
+            );
+            assert_eq!(&bytes[..], data);
+            assert_eq!(got, [0, 4, 4, 11, 11]);
+            // Una capacidad que no alcanza no escribe nada.
+            let (mut small, mut untouched) = ([7_u8; 4], [-1_i32; 5]);
+            assert_eq!(
+                geoda_column_copy_utf8(column, small.as_mut_ptr(), 4, untouched.as_mut_ptr(), 5),
+                GEODA_ERR_OUT_OF_BOUNDS
+            );
+            assert_eq!((small, untouched), ([7; 4], [-1; 5]));
+            // Una columna que no es Utf8 no se copia como texto.
+            let other = [1_i32];
+            let mut ints = NULL_COLUMN;
+            assert_eq!(
+                geoda_column_from_i32(other.as_ptr(), 1, ptr::null(), &raw mut ints),
+                GEODA_OK
+            );
+            assert_eq!(
+                geoda_column_utf8_data_len(ints, &raw mut total),
+                GEODA_ERR_TYPE_MISMATCH
+            );
+            free(ints);
+        }
+        free(column);
+    }
+
+    #[test]
+    fn utf8_invalido_es_ffi_y_no_crea_nada() {
+        let data = b"abc\xff";
+        let cases: [(&[i32], usize); 4] = [
+            (&[1, 2], 1),    // el primer offset no es 0
+            (&[0, 3, 2], 2), // decrece
+            (&[0, 9], 1),    // pasa de los bytes
+            (&[0, 4], 1),    // bytes que no son UTF-8
+        ];
+        for (offsets, len) in cases {
+            let mut column = ptr::NonNull::dangling().as_ptr();
+            // SAFETY: arreglos y `out` validos.
+            let code = unsafe {
+                geoda_column_from_utf8(
+                    data.as_ptr(),
+                    data.len(),
+                    offsets.as_ptr(),
+                    len,
+                    ptr::null(),
+                    &raw mut column,
+                )
+            };
+            assert_eq!(code, GEODA_ERR_FFI, "{offsets:?}");
+            assert!(column.is_null());
+        }
+    }
+
+    #[test]
+    fn capacidad_corta_y_tipo_equivocado() {
+        let values = [1_i64, 2, 3];
+        let mut column = NULL_COLUMN;
+        // SAFETY: arreglos y `out` validos.
+        unsafe {
+            assert_eq!(
+                geoda_column_from_i64(values.as_ptr(), 3, ptr::null(), &raw mut column),
+                GEODA_OK
+            );
+            let mut small = [-1_i64; 2];
+            assert_eq!(
+                geoda_column_copy_i64(column, small.as_mut_ptr(), 2),
+                GEODA_ERR_OUT_OF_BOUNDS
+            );
+            assert_eq!(small, [-1, -1]);
+            let mut wrong = [0.0_f64; 3];
+            assert_eq!(
+                geoda_column_copy_f64(column, wrong.as_mut_ptr(), 3),
+                GEODA_ERR_TYPE_MISMATCH
+            );
+            let mut bytes = [0_u8; 3];
+            assert_eq!(
+                geoda_column_copy_bool(column, bytes.as_mut_ptr(), 3),
+                GEODA_ERR_TYPE_MISMATCH
+            );
+            // La validez se copia de cualquier columna; una capacidad corta tampoco escribe.
+            let mut mask = [9_u8; 2];
+            assert_eq!(
+                geoda_column_copy_validity(column, mask.as_mut_ptr(), 2),
+                GEODA_ERR_OUT_OF_BOUNDS
+            );
+            assert_eq!(mask, [9, 9]);
+        }
+        free(column);
+    }
+
+    #[test]
+    fn punteros_nulos_y_mal_alineados() {
+        let mut column = ptr::NonNull::dangling().as_ptr();
+        // SAFETY: las llamadas son defensivas: no leen punteros NULL.
+        unsafe {
+            assert_eq!(
+                geoda_column_from_f64(ptr::null(), 3, ptr::null(), &raw mut column),
+                GEODA_ERR_INVALID_ARGUMENT
+            );
+            assert!(column.is_null());
+            assert_eq!(
+                geoda_column_from_f64(ptr::null(), 0, ptr::null(), &raw mut column),
+                GEODA_OK
+            );
+            assert_eq!(geoda_column_len(column), 0);
+            let mut empty = [0.0_f64; 0];
+            assert_eq!(
+                geoda_column_copy_f64(column, empty.as_mut_ptr(), 0),
+                GEODA_OK
+            );
+            assert_eq!(geoda_column_copy_f64(column, ptr::null_mut(), 0), GEODA_OK);
+            free(column);
+            let values = [1.0_f64];
+            assert_eq!(
+                geoda_column_from_f64(values.as_ptr(), 1, ptr::null(), ptr::null_mut()),
+                GEODA_ERR_INVALID_ARGUMENT
+            );
+            // Un `*const f64` en la direccion 1: no es NULL pero no esta alineado a 8.
+            let misaligned = ptr::without_provenance::<f64>(1);
+            assert_eq!(
+                geoda_column_from_f64(misaligned, 1, ptr::null(), &raw mut column),
+                GEODA_ERR_INVALID_ARGUMENT
+            );
+            assert!(column.is_null());
+            assert_eq!(geoda_column_dtype(ptr::null()), GEODA_ERR_INVALID_ARGUMENT);
+            let mut n = 0_u8;
+            assert_eq!(
+                geoda_column_copy_validity(ptr::null(), &raw mut n, 1),
+                GEODA_ERR_INVALID_ARGUMENT
+            );
+        }
+    }
+
+    #[test]
+    fn un_tamano_enorme_se_rechaza_antes_de_leer() {
+        // Un puntero alineado que no se desreferencia: el tamano en bytes desborda `isize`.
+        let dangling = ptr::NonNull::<i64>::dangling().as_ptr().cast_const();
+        let mut column = ptr::NonNull::dangling().as_ptr();
+        // SAFETY: el puntero no se desreferencia porque el tamano se rechaza antes.
+        let code = unsafe {
+            geoda_column_from_i64(dangling, usize::MAX / 4, ptr::null(), &raw mut column)
+        };
+        assert_eq!(code, GEODA_ERR_OUT_OF_BOUNDS);
+        assert!(column.is_null());
+        // Y `len + 1` que desborda en utf8.
+        // SAFETY: igual.
+        let code = unsafe {
+            geoda_column_from_utf8(
+                ptr::null(),
+                0,
+                ptr::NonNull::<i32>::dangling().as_ptr(),
+                usize::MAX,
+                ptr::null(),
+                &raw mut column,
+            )
+        };
+        assert_eq!(code, GEODA_ERR_OUT_OF_BOUNDS);
+    }
+
+    #[test]
+    fn reservar_escribir_y_liberar() {
+        assert!(geoda_alloc(0).is_null());
+        let buffer = geoda_alloc(64);
+        assert!(!buffer.is_null());
+        assert_eq!(buffer as usize % 8, 0);
+        // SAFETY: 64 bytes recien reservados.
+        unsafe {
+            for i in 0..64 {
+                *buffer.add(i) = u8::try_from(i).unwrap();
+            }
+            assert_eq!(*buffer.add(63), 63);
+            geoda_dealloc(buffer, 64);
+            geoda_dealloc(ptr::null_mut(), 64);
+            geoda_dealloc(ptr::NonNull::dangling().as_ptr(), 0);
         }
     }
 }

@@ -291,6 +291,72 @@ def _load():
         ),
         "geoda_pca_params": ([p_handle] + [ctypes.POINTER(p_handle)] * 4, ctypes.c_int32),
         "geoda_pca_free": ([p_handle], None),
+        "geoda_column_dtype": ([p_handle], ctypes.c_int32),
+        "geoda_column_copy_validity": (
+            [p_handle, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t],
+            ctypes.c_int32,
+        ),
+        "geoda_column_copy_bool": (
+            [p_handle, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t],
+            ctypes.c_int32,
+        ),
+        "geoda_column_copy_i32": (
+            [p_handle, ctypes.POINTER(ctypes.c_int32), ctypes.c_size_t],
+            ctypes.c_int32,
+        ),
+        "geoda_column_copy_i64": (
+            [p_handle, ctypes.POINTER(ctypes.c_int64), ctypes.c_size_t],
+            ctypes.c_int32,
+        ),
+        "geoda_column_copy_f64": (
+            [p_handle, ctypes.POINTER(ctypes.c_double), ctypes.c_size_t],
+            ctypes.c_int32,
+        ),
+        "geoda_column_utf8_data_len": (
+            [p_handle, ctypes.POINTER(ctypes.c_size_t)],
+            ctypes.c_int32,
+        ),
+        "geoda_column_copy_utf8": (
+            [
+                p_handle,
+                ctypes.POINTER(ctypes.c_uint8),
+                ctypes.c_size_t,
+                ctypes.POINTER(ctypes.c_int32),
+                ctypes.c_size_t,
+            ],
+            ctypes.c_int32,
+        ),
+        "geoda_column_from_bool": (
+            [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint8)]
+            + [ctypes.POINTER(p_handle)],
+            ctypes.c_int32,
+        ),
+        "geoda_column_from_i32": (
+            [ctypes.POINTER(ctypes.c_int32), ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint8)]
+            + [ctypes.POINTER(p_handle)],
+            ctypes.c_int32,
+        ),
+        "geoda_column_from_i64": (
+            [ctypes.POINTER(ctypes.c_int64), ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint8)]
+            + [ctypes.POINTER(p_handle)],
+            ctypes.c_int32,
+        ),
+        "geoda_column_from_f64": (
+            [ctypes.POINTER(ctypes.c_double), ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint8)]
+            + [ctypes.POINTER(p_handle)],
+            ctypes.c_int32,
+        ),
+        "geoda_column_from_utf8": (
+            [
+                ctypes.POINTER(ctypes.c_uint8),
+                ctypes.c_size_t,
+                ctypes.POINTER(ctypes.c_int32),
+                ctypes.c_size_t,
+                ctypes.POINTER(ctypes.c_uint8),
+                ctypes.POINTER(p_handle),
+            ],
+            ctypes.c_int32,
+        ),
         "geoda_dendrogram_cut": (
             [p_handle, p_handle, ctypes.c_size_t, ctypes.c_size_t, ctypes.POINTER(p_handle)],
             ctypes.c_int32,
@@ -331,6 +397,9 @@ def _load():
 
 
 LIB = _load()
+
+
+DTYPE_BOOL, DTYPE_INT32, DTYPE_INT64, DTYPE_FLOAT64, DTYPE_UTF8 = range(5)
 
 
 def abi_version():
@@ -431,6 +500,56 @@ class Column:
             self.handle, values.handle, AGG[agg], ddof, workers, *(ctypes.byref(o) for o in outs)
         )
         return Column._own(outs, code)
+
+    def array_roundtrip(self):
+        """Lee la columna con los accesores planos (`copy_*`) y la reconstruye con `from_*`.
+        Devuelve `(Column, 0)` o `(None, codigo)`."""
+        dtype = LIB.geoda_column_dtype(self.handle)
+        length = LIB.geoda_column_len(self.handle)
+        validity = (ctypes.c_uint8 * max(length, 1))(*([9] * max(length, 1)))
+        code = LIB.geoda_column_copy_validity(self.handle, validity, length)
+        if code != OK:
+            return None, code
+        if any(validity[i] > 1 for i in range(length)):
+            raise AssertionError("copy_validity dejo un byte distinto de 0 y 1")
+        out = ctypes.c_void_p(None)
+        simple = {
+            DTYPE_BOOL: (ctypes.c_uint8, "bool"),
+            DTYPE_INT32: (ctypes.c_int32, "i32"),
+            DTYPE_INT64: (ctypes.c_int64, "i64"),
+            DTYPE_FLOAT64: (ctypes.c_double, "f64"),
+        }
+        if dtype in simple:
+            ctype, name = simple[dtype]
+            values = (ctype * max(length, 1))()
+            code = getattr(LIB, f"geoda_column_copy_{name}")(self.handle, values, length)
+            if code != OK:
+                return None, code
+            code = getattr(LIB, f"geoda_column_from_{name}")(
+                values, length, validity, ctypes.byref(out)
+            )
+        elif dtype == DTYPE_UTF8:
+            total = ctypes.c_size_t(0)
+            code = LIB.geoda_column_utf8_data_len(self.handle, ctypes.byref(total))
+            if code != OK:
+                return None, code
+            data = (ctypes.c_uint8 * max(total.value, 1))()
+            offsets = (ctypes.c_int32 * (length + 1))(*([-1] * (length + 1)))
+            code = LIB.geoda_column_copy_utf8(
+                self.handle, data, total.value, offsets, length + 1
+            )
+            if code != OK:
+                return None, code
+            code = LIB.geoda_column_from_utf8(
+                data, total.value, offsets, length, validity, ctypes.byref(out)
+            )
+        else:
+            raise AssertionError(f"dtype desconocido: {dtype}")
+        if code != OK:
+            if out.value:
+                raise AssertionError("la capi fallo pero dejo el out sin poner en NULL")
+            return None, code
+        return Column(out.value), code
 
     def text_op(self, name, *others):
         """Operacion de texto `geoda_<name>` con `self` y `others` de entrada y un `out`:

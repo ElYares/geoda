@@ -1,0 +1,32 @@
+{
+  "spec_version": 1,
+  "id": "array/float64_special_values",
+  "description": "los accesores planos conservan NaN, infinitos, cero negativo y nulos (un nulo no es un NaN)",
+  "input": {
+    "dtype": "float64",
+    "values": [
+      1.5,
+      null,
+      "NaN",
+      "Infinity",
+      "-Infinity",
+      "-0.0",
+      0.0
+    ]
+  },
+  "op": "array_roundtrip",
+  "expect": {
+    "dtype": "float64",
+    "values": [
+      1.5,
+      null,
+      "NaN",
+      "Infinity",
+      "-Infinity",
+      "-0.0",
+      0.0
+    ],
+    "null_count": 1,
+    "len": 7
+  }
+}

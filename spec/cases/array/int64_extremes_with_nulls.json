@@ -1,0 +1,16 @@
+{
+  "spec_version": 1,
+  "id": "array/int64_extremes_with_nulls",
+  "description": "limites de int64 y nulos",
+  "input": {
+    "dtype": "int64",
+    "values": [-9223372036854775808, null, 0, 9223372036854775807, null]
+  },
+  "op": "array_roundtrip",
+  "expect": {
+    "dtype": "int64",
+    "values": [-9223372036854775808, null, 0, 9223372036854775807, null],
+    "null_count": 2,
+    "len": 5
+  }
+}

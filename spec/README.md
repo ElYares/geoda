@@ -78,6 +78,7 @@ no conozca **hace fallar el caso**, no lo salta.
 | `corr` | — | correlacion de Pearson entre `input` e `input2` (`geoda_column_corr`) | `expect.value` |
 | `histogram` | `n_bins`, `range` (opcional) | histograma de ancho fijo (`geoda_column_histogram`) | `expect.columns` |
 | `group_by` | `agg`, `ddof` (solo `var`/`std`) | agregado de `input2` por los grupos de `input` (`geoda_column_group_by`) | `expect.columns` |
+| `array_roundtrip` | — | lee `input` con los accesores planos (`geoda_column_copy_*`) y la reconstruye con `geoda_column_from_*` | `expect` completo sobre la columna reconstruida |
 | `edit_distance` | — | distancia de edicion fila a fila entre `input` e `input2` (`geoda_column_edit_distance`) | `expect.columns` |
 | `dedupe` | `max_distance` | agrupa las filas de `input` (`utf8`) que estan cerca (`geoda_column_dedupe`) | `expect.columns` y `expect.count` |
 | `lis` | — | posiciones de la subsecuencia creciente mas larga (`geoda_column_lis`) | `expect.columns` |
@@ -183,6 +184,16 @@ la consulta. Las columnas de resultado, en este orden:
   `TYPE_MISMATCH`; dirigido, `INVALID_ARGUMENT`.
 
 `expect.count`, `total`, `components`, `nodes`, `inertia` e `iterations` se comparan exactos (el flotante bit a bit) salvo que el caso lleve `expect.tolerance`.
+
+#### Arreglos planos (fase 8)
+
+`array_roundtrip` ejercita los accesores por arreglos planos que usan los bindings (decision 015, O1):
+la columna de `input` se importa por Arrow como siempre, se lee con `geoda_column_dtype`,
+`geoda_column_copy_validity` y el `geoda_column_copy_<tipo>` que corresponde (para `utf8`,
+`geoda_column_utf8_data_len` y `geoda_column_copy_utf8`) y se **reconstruye** con
+`geoda_column_from_<tipo>`; el resultado debe ser igual a la entrada (`dtype`, `values`, `null_count`,
+`len`). Los casos cubren `NaN`, infinitos, `-0.0`, extremos de los enteros, nulos, cadenas vacias y no
+ASCII, y columnas vacias. Los errores de capacidad, tipo y offsets se prueban en los tests de la capi.
 
 #### Texto y similitud (fase 5)
 
