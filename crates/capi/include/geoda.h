@@ -1,4 +1,4 @@
-/* geoda C-API (v0). Generado con cbindgen: no editar a mano. */
+/* geoda C-API (ABI 1.x). Generado con cbindgen: no editar a mano. */
 
 #ifndef GEODA_H
 #define GEODA_H

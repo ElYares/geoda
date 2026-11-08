@@ -13,3 +13,4 @@ graphify-out/
 .env.*
 !.env.example
 bindings/python/dist/
+/build

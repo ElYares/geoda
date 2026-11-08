@@ -5,7 +5,7 @@ no_includes = false
 usize_is_size_t = true
 documentation_style = "c99"
 cpp_compat = true
-header = "/* geoda C-API (v0). Generado con cbindgen: no editar a mano. */"
+header = "/* geoda C-API (ABI 1.x). Generado con cbindgen: no editar a mano. */"
 
 # La Arrow C Data Interface la define Arrow, no geoda. Se copia tal cual, con la
 # guarda estandar, para convivir con `arrow/c/abi.h` si el cliente ya lo incluye.

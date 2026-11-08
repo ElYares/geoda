@@ -41,6 +41,24 @@ jobs:
       - name: ABI congelada (lista de simbolos y version)
         run: abi/check.sh
 
+  cpp:
+    # El envoltorio C++17 de solo cabeceras (decision 015): g++ y clang++ con -Werror, ASan y UBSan.
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cxx: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build -p geoda-capi
+      - name: cmake
+        run: |
+          cmake -S bindings/cpp -B build/cpp -DGEODA_LIB_DIR=$PWD/target/debug
+          cmake --build build/cpp
+          ctest --test-dir build/cpp --output-on-failure
+        env:
+          CXX: ${{ matrix.cxx }}
+
   python:
     # El binding (PyO3 + maturin), el runner de spec por ctypes y el interop con
     # pyarrow. Falla si algun test de pyarrow se salta: aqui debe correr.
