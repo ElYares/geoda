@@ -1,0 +1,37 @@
+{
+  "spec_version": 1,
+  "id": "model/regression_exact_line",
+  "description": "puntos (0,1),(1,3),(2,5),(3,7) sobre y = 1 + 2x: coeficiente 2, intercepto 1, R^2 1; se predice x = 10 (21)",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [0.0, 1.0, 2.0, 3.0]
+    }
+  ],
+  "y": {
+    "dtype": "float64",
+    "values": [1.0, 3.0, 5.0, 7.0]
+  },
+  "predict_inputs": [
+    {
+      "dtype": "float64",
+      "values": [10.0]
+    }
+  ],
+  "op": "regression_fit_predict",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "float64",
+        "values": [2.0]
+      },
+      {
+        "dtype": "float64",
+        "values": [21.0]
+      }
+    ],
+    "intercept": 1.0,
+    "r_squared": 1.0,
+    "tolerance": 1e-12
+  }
+}

@@ -3,7 +3,8 @@
 //! y `group_aggregate` (la base de `geoda.group_by`), la clase `Graph` (fase 4) y el texto de la fase 5 (`edit_distance`, `dedupe`, `lis`,
 //! `huffman_encode` y `huffman_decode`), el clustering de la fase 6 (`kmeans`,
 //! `hierarchical` y `cut_tree`) el arbol de decision (`DecisionTree`) y las reglas de asociacion (`frequent_itemsets` y
-//! `association_rules`) y el algebra lineal de la fase 7 (`matmul`, `solve`, `det`, `inv`, `qr`, `svd` y `lstsq`).
+//! `association_rules`) y el algebra lineal de la fase 7 (`matmul`, `solve`, `det`, `inv`, `qr`, `svd` y `lstsq`),
+//! la regresion lineal (`LinearRegression`) y el PCA (`PCA`).
 //!
 //! Todas las funciones numericas aceptan una lista o cualquier objeto con el protocolo Arrow
 //! `PyCapsule` (`__arrow_c_array__`): `pyarrow`, `polars`, `pandas` con Arrow... (S10). Los
@@ -16,7 +17,7 @@
 #![allow(unsafe_code)]
 
 use pyo3::IntoPyObjectExt;
-use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList};
 
@@ -27,7 +28,8 @@ use geoda_algo::{
     single_linkage_columns,
 };
 use geoda_algo::{
-    Matrix, association_rules as rules_of, det as det_of, frequent_itemsets as itemsets_of,
+    LinearRegression as Regression, Matrix, Pca as PcaModel, association_rules as rules_of,
+    det as det_of, fit_pca_columns, fit_regression_columns, frequent_itemsets as itemsets_of,
     inverse as inverse_of, least_squares, qr as qr_of, solve as solve_of, svd as svd_of,
 };
 use geoda_core::interop::arrow_c::{ArrowArray, ArrowSchema, import_column};
@@ -822,6 +824,174 @@ fn lstsq(a: Vec<Vec<f64>>, b: Vec<f64>) -> PyResult<Vec<f64>> {
         .coefficients)
 }
 
+/// Regresion lineal por minimos cuadrados (QR de Householder): `y = b0 + b1 x1 + ... + bd xd`.
+///
+/// `LinearRegression(fit_intercept=True).fit(columnas, y)` ajusta y devuelve el propio modelo;
+/// `predict(columnas)` da una prediccion por fila. `columnas` es una lista de columnas (una por
+/// variable, sin `None` ni `NaN`) e `y` una lista de numeros o una columna Arrow. Despues del ajuste
+/// hay `coef_` (un coeficiente por variable), `intercept_` (`0.0` sin intercepto) y `r2_`
+/// (coeficiente de determinacion respecto a la media de `y`).
+///
+/// # Errors
+/// `ValueError` si hay nulos o no finitos, las columnas e `y` miden distinto, hay menos filas que
+/// coeficientes o las variables son colineales (`rango incompleto`); `RuntimeError` si se predice
+/// antes de ajustar; `AttributeError` al leer un atributo antes de ajustar.
+#[pyclass(module = "geoda")]
+struct LinearRegression {
+    fit_intercept: bool,
+    model: Option<Regression>,
+}
+
+impl LinearRegression {
+    fn fitted(&self) -> PyResult<&Regression> {
+        self.model
+            .as_ref()
+            .ok_or_else(|| PyAttributeError::new_err("el modelo no esta ajustado: llama a fit()"))
+    }
+}
+
+#[pymethods]
+impl LinearRegression {
+    #[new]
+    #[pyo3(signature = (fit_intercept=true))]
+    fn new(fit_intercept: bool) -> Self {
+        Self {
+            fit_intercept,
+            model: None,
+        }
+    }
+
+    /// Ajusta el modelo (descarta el anterior) y lo devuelve.
+    fn fit<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        columns: &Bound<'py, PyAny>,
+        y: &Bound<'py, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let owned = matrix_columns(columns)?;
+        let refs: Vec<&Column> = owned.iter().collect();
+        let target = input_column(y)?;
+        slf.model = Some(
+            fit_regression_columns(&refs, &target, slf.fit_intercept)
+                .map_err(|e| value_error(&e))?,
+        );
+        Ok(slf)
+    }
+
+    /// Prediccion `b0 + sum(bi * xi)` para cada fila.
+    fn predict(&self, columns: &Bound<'_, PyAny>) -> PyResult<Vec<f64>> {
+        let model = self
+            .model
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("el modelo no esta ajustado: llama a fit()"))?;
+        let owned = matrix_columns(columns)?;
+        let refs: Vec<&Column> = owned.iter().collect();
+        model.predict_columns(&refs).map_err(|e| value_error(&e))
+    }
+
+    /// Un coeficiente por variable, en el orden de las columnas.
+    #[getter]
+    fn coef_(&self) -> PyResult<Vec<f64>> {
+        Ok(self.fitted()?.coefficients.clone())
+    }
+
+    /// El intercepto (`0.0` si se ajusto sin intercepto).
+    #[getter]
+    fn intercept_(&self) -> PyResult<f64> {
+        Ok(self.fitted()?.intercept)
+    }
+
+    /// Coeficiente de determinacion `R^2`.
+    #[getter]
+    fn r2_(&self) -> PyResult<f64> {
+        Ok(self.fitted()?.r_squared)
+    }
+}
+
+/// Analisis de componentes principales: centra las variables (sin escalar) y toma la SVD.
+///
+/// `PCA(n_components).fit(columnas)` ajusta y devuelve el propio modelo; `transform(columnas)` proyecta
+/// sobre los componentes y devuelve una lista de filas de `n_components` valores. Despues del ajuste
+/// hay `components_` (una fila por componente), `explained_variance_` (`s^2 / (n - 1)`),
+/// `explained_variance_ratio_` y `mean_`. El signo de los componentes es determinista.
+///
+/// # Errors
+/// `ValueError` si hay nulos o no finitos, menos de 2 filas o `n_components` no esta entre 1 y
+/// `min(filas, variables)`; `RuntimeError` si se transforma antes de ajustar; `AttributeError` al leer
+/// un atributo antes de ajustar.
+#[pyclass(module = "geoda", name = "PCA")]
+struct Pca {
+    n_components: usize,
+    model: Option<PcaModel>,
+}
+
+impl Pca {
+    fn fitted(&self) -> PyResult<&PcaModel> {
+        self.model
+            .as_ref()
+            .ok_or_else(|| PyAttributeError::new_err("el PCA no esta ajustado: llama a fit()"))
+    }
+}
+
+#[pymethods]
+impl Pca {
+    #[new]
+    fn new(n_components: usize) -> Self {
+        Self {
+            n_components,
+            model: None,
+        }
+    }
+
+    /// Ajusta el PCA (descarta el anterior) y lo devuelve.
+    fn fit<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        columns: &Bound<'py, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let owned = matrix_columns(columns)?;
+        let refs: Vec<&Column> = owned.iter().collect();
+        slf.model = Some(fit_pca_columns(&refs, slf.n_components).map_err(|e| value_error(&e))?);
+        Ok(slf)
+    }
+
+    /// Proyecta sobre los componentes: lista de filas.
+    fn transform(&self, columns: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<f64>>> {
+        let model = self
+            .model
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("el PCA no esta ajustado: llama a fit()"))?;
+        let owned = matrix_columns(columns)?;
+        let refs: Vec<&Column> = owned.iter().collect();
+        Ok(model
+            .transform_columns(&refs)
+            .map_err(|e| value_error(&e))?
+            .to_rows())
+    }
+
+    /// Los componentes, uno por fila.
+    #[getter]
+    fn components_(&self) -> PyResult<Vec<Vec<f64>>> {
+        Ok(self.fitted()?.components.to_rows())
+    }
+
+    /// Varianza que explica cada componente.
+    #[getter]
+    fn explained_variance_(&self) -> PyResult<Vec<f64>> {
+        Ok(self.fitted()?.explained_variance.clone())
+    }
+
+    /// Fraccion de la varianza total que explica cada componente.
+    #[getter]
+    fn explained_variance_ratio_(&self) -> PyResult<Vec<f64>> {
+        Ok(self.fitted()?.explained_variance_ratio.clone())
+    }
+
+    /// Media de cada variable.
+    #[getter]
+    fn mean_(&self) -> PyResult<Vec<f64>> {
+        Ok(self.fitted()?.mean.clone())
+    }
+}
+
 /// Subsecuencia estrictamente creciente mas larga (LIS) de una lista de numeros o una columna
 /// Arrow numerica. Devuelve `{"length": int, "indices": [int]}` con las posiciones de sus
 /// elementos, de menor a mayor.
@@ -1028,6 +1198,8 @@ fn _geoda(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hierarchical, m)?)?;
     m.add_function(wrap_pyfunction!(cut_tree, m)?)?;
     m.add_class::<DecisionTree>()?;
+    m.add_class::<LinearRegression>()?;
+    m.add_class::<Pca>()?;
     m.add_function(wrap_pyfunction!(matmul, m)?)?;
     m.add_function(wrap_pyfunction!(solve, m)?)?;
     m.add_function(wrap_pyfunction!(det, m)?)?;

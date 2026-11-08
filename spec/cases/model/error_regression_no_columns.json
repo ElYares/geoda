@@ -1,0 +1,14 @@
+{
+  "spec_version": 1,
+  "id": "model/error_regression_no_columns",
+  "description": "una lista vacia de variables es INVALID_ARGUMENT",
+  "inputs": [],
+  "y": {
+    "dtype": "float64",
+    "values": [1.0, 2.0]
+  },
+  "op": "regression_fit_predict",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

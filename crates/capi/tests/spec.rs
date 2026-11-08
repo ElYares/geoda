@@ -16,19 +16,21 @@ use geoda::{
     GEODA_AGG_COUNT, GEODA_AGG_MAX, GEODA_AGG_MEAN, GEODA_AGG_MIN, GEODA_AGG_STD, GEODA_AGG_SUM,
     GEODA_AGG_VAR, GEODA_ERR_ALLOC, GEODA_ERR_FFI, GEODA_ERR_INTERNAL, GEODA_ERR_INVALID_ARGUMENT,
     GEODA_ERR_LENGTH_MISMATCH, GEODA_ERR_OUT_OF_BOUNDS, GEODA_ERR_PANIC, GEODA_ERR_TYPE_MISMATCH,
-    GEODA_ERR_UNSUPPORTED, GEODA_OK, GeodaColumn, GeodaGraph, GeodaTree, geoda_apriori_itemsets,
-    geoda_apriori_rules, geoda_column_corr, geoda_column_count, geoda_column_dedupe,
-    geoda_column_edit_distance, geoda_column_free, geoda_column_from_arrow, geoda_column_group_by,
-    geoda_column_histogram, geoda_column_len, geoda_column_lis, geoda_column_max_f64,
-    geoda_column_max_i64, geoda_column_mean, geoda_column_median, geoda_column_min_f64,
-    geoda_column_min_i64, geoda_column_null_count, geoda_column_percentile, geoda_column_slice,
-    geoda_column_std, geoda_column_sum_f64, geoda_column_sum_i64, geoda_column_to_arrow,
-    geoda_column_var, geoda_dendrogram_cut, geoda_det, geoda_graph_bfs, geoda_graph_components,
-    geoda_graph_dijkstra, geoda_graph_free, geoda_graph_mst, geoda_graph_new,
-    geoda_graph_topological_order, geoda_hierarchical, geoda_huffman_decode, geoda_huffman_encode,
-    geoda_inverse, geoda_kmeans, geoda_last_error_message, geoda_lstsq, geoda_lu_solve,
-    geoda_matmul, geoda_qr, geoda_svd, geoda_tree_fit, geoda_tree_free, geoda_tree_node_count,
-    geoda_tree_predict,
+    GEODA_ERR_UNSUPPORTED, GEODA_OK, GeodaColumn, GeodaGraph, GeodaPca, GeodaRegression, GeodaTree,
+    geoda_apriori_itemsets, geoda_apriori_rules, geoda_column_corr, geoda_column_count,
+    geoda_column_dedupe, geoda_column_edit_distance, geoda_column_free, geoda_column_from_arrow,
+    geoda_column_group_by, geoda_column_histogram, geoda_column_len, geoda_column_lis,
+    geoda_column_max_f64, geoda_column_max_i64, geoda_column_mean, geoda_column_median,
+    geoda_column_min_f64, geoda_column_min_i64, geoda_column_null_count, geoda_column_percentile,
+    geoda_column_slice, geoda_column_std, geoda_column_sum_f64, geoda_column_sum_i64,
+    geoda_column_to_arrow, geoda_column_var, geoda_dendrogram_cut, geoda_det, geoda_graph_bfs,
+    geoda_graph_components, geoda_graph_dijkstra, geoda_graph_free, geoda_graph_mst,
+    geoda_graph_new, geoda_graph_topological_order, geoda_hierarchical, geoda_huffman_decode,
+    geoda_huffman_encode, geoda_inverse, geoda_kmeans, geoda_last_error_message, geoda_lstsq,
+    geoda_lu_solve, geoda_matmul, geoda_pca_fit, geoda_pca_free, geoda_pca_params,
+    geoda_pca_transform, geoda_qr, geoda_regression_fit, geoda_regression_free,
+    geoda_regression_params, geoda_regression_predict, geoda_svd, geoda_tree_fit, geoda_tree_free,
+    geoda_tree_node_count, geoda_tree_predict,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -678,6 +680,8 @@ fn run_matrix_op(op: &str, case: &Value, inputs: &Value) -> Result<OpResult, Str
             collect_with_extras(code, &outs, Vec::new())
         }
         "tree_fit_predict" => run_tree(case, &pointers),
+        "regression_fit_predict" => run_regression(case, &pointers),
+        "pca_fit_transform" => run_pca(case, &pointers),
         "matmul" | "lu_solve" | "det" | "inverse" | "qr" | "svd" | "lstsq" => {
             run_linalg(op, case, &pointers)
         }
@@ -763,6 +767,170 @@ fn run_linalg(op: &str, case: &Value, a: &[*const GeodaColumn]) -> Result<OpResu
             collect_outs(code, &[out])
         }
     }
+}
+
+/// Modelos de la capi que se liberan solos al salir de alcance.
+struct RegressionGuard(*mut GeodaRegression);
+struct PcaGuard(*mut GeodaPca);
+
+impl Drop for RegressionGuard {
+    fn drop(&mut self) {
+        // SAFETY: el handle viene de `geoda_regression_fit` y se libera una sola vez, aqui.
+        unsafe { geoda_regression_free(self.0) };
+    }
+}
+
+impl Drop for PcaGuard {
+    fn drop(&mut self) {
+        // SAFETY: el handle viene de `geoda_pca_fit` y se libera una sola vez, aqui.
+        unsafe { geoda_pca_free(self.0) };
+    }
+}
+
+/// Importa `predict_inputs` (una lista de columnas) o, si falta, devuelve las de entrenamiento.
+fn predict_columns(
+    case: &Value,
+    train: &[*const GeodaColumn],
+    owned: &mut Vec<Handle>,
+) -> Result<Result<Vec<*const GeodaColumn>, i32>, String> {
+    let Some(specs) = case.get("predict_inputs") else {
+        return Ok(Ok(train.to_vec()));
+    };
+    for spec in specs
+        .as_array()
+        .ok_or("predict_inputs debe ser una lista")?
+    {
+        match import_through_capi(spec)? {
+            Ok(handle) => owned.push(handle),
+            Err(code) => return Ok(Err(code)),
+        }
+    }
+    Ok(Ok(owned.iter().map(|h| h.0.cast_const()).collect()))
+}
+
+/// Regresion de un caso: ajusta con `inputs` y `y`, lee los parametros y predice `predict_inputs`.
+/// Salen `coefficients` y `predictions`, y los escalares `intercept` y `r_squared`.
+fn run_regression(case: &Value, train: &[*const GeodaColumn]) -> Result<OpResult, String> {
+    let y = match import_through_capi(case.get("y").ok_or("y falta")?)? {
+        Ok(handle) => handle,
+        Err(code) => return Ok(Err(code)),
+    };
+    let fit_intercept = match case["args"].get("fit_intercept") {
+        None | Some(Value::Null) => true,
+        Some(value) => value
+            .as_bool()
+            .ok_or("args.fit_intercept debe ser un booleano")?,
+    };
+    let mut model: *mut GeodaRegression = ptr::null_mut();
+    // SAFETY: handles validos, arreglo de punteros y `out` escribible.
+    let code = unsafe {
+        geoda_regression_fit(
+            train.as_ptr(),
+            train.len(),
+            y.0,
+            fit_intercept,
+            &raw mut model,
+        )
+    };
+    if code != GEODA_OK {
+        if !model.is_null() {
+            return Err("la capi fallo pero dejo el modelo sin poner en NULL".into());
+        }
+        return Ok(Err(code));
+    }
+    let model = RegressionGuard(model);
+    let (mut coefficients, mut intercept, mut r_squared) = (ptr::null_mut(), f64::NAN, f64::NAN);
+    // SAFETY: modelo valido y `out` escribibles.
+    let code = unsafe {
+        geoda_regression_params(
+            model.0,
+            &raw mut coefficients,
+            &raw mut intercept,
+            &raw mut r_squared,
+        )
+    };
+    let coefficients = Handle(coefficients);
+    if code != GEODA_OK {
+        return Ok(Err(code));
+    }
+    let mut extra = Vec::new();
+    let columns = match predict_columns(case, train, &mut extra)? {
+        Ok(columns) => columns,
+        Err(code) => return Ok(Err(code)),
+    };
+    let mut predictions: *mut GeodaColumn = ptr::null_mut();
+    // SAFETY: modelo y columnas validos, `out` escribible.
+    let code = unsafe {
+        geoda_regression_predict(
+            model.0,
+            columns.as_ptr(),
+            columns.len(),
+            &raw mut predictions,
+        )
+    };
+    if code != GEODA_OK {
+        if !predictions.is_null() {
+            return Err("la capi fallo pero dejo un out sin poner en NULL".into());
+        }
+        return Ok(Err(code));
+    }
+    Ok(Ok(Outcome::Graph(
+        vec![coefficients, Handle(predictions)],
+        vec![
+            ("intercept", Extra::Float(intercept)),
+            ("r_squared", Extra::Float(r_squared)),
+        ],
+    )))
+}
+
+/// PCA de un caso: ajusta con `inputs` (`args.n_components`), lee los parametros y proyecta
+/// `predict_inputs`. Salen `components`, `explained_variance`, `explained_variance_ratio`, `mean`
+/// y `transformed`.
+fn run_pca(case: &Value, train: &[*const GeodaColumn]) -> Result<OpResult, String> {
+    let mut model: *mut GeodaPca = ptr::null_mut();
+    // SAFETY: arreglo de punteros y `out` escribible.
+    let code = unsafe {
+        geoda_pca_fit(
+            train.as_ptr(),
+            train.len(),
+            usize_arg(case, "n_components")?,
+            &raw mut model,
+        )
+    };
+    if code != GEODA_OK {
+        if !model.is_null() {
+            return Err("la capi fallo pero dejo el modelo sin poner en NULL".into());
+        }
+        return Ok(Err(code));
+    }
+    let model = PcaGuard(model);
+    let mut outs = [ptr::null_mut::<GeodaColumn>(); 5];
+    let [components, variance, ratio, mean, transformed] = &mut outs;
+    // SAFETY: modelo valido y `out` escribibles.
+    let code = unsafe { geoda_pca_params(model.0, components, variance, ratio, mean) };
+    let mut handles: Vec<Handle> = [*components, *variance, *ratio, *mean]
+        .into_iter()
+        .map(Handle)
+        .collect();
+    if code != GEODA_OK {
+        return Ok(Err(code));
+    }
+    let mut extra = Vec::new();
+    let columns = match predict_columns(case, train, &mut extra)? {
+        Ok(columns) => columns,
+        Err(code) => return Ok(Err(code)),
+    };
+    // SAFETY: modelo y columnas validos, `out` escribible.
+    let code =
+        unsafe { geoda_pca_transform(model.0, columns.as_ptr(), columns.len(), transformed) };
+    if code != GEODA_OK {
+        if !transformed.is_null() {
+            return Err("la capi fallo pero dejo un out sin poner en NULL".into());
+        }
+        return Ok(Err(code));
+    }
+    handles.push(Handle(*transformed));
+    Ok(Ok(Outcome::Columns(handles)))
 }
 
 /// Arbol de la capi que se libera solo al salir de alcance.

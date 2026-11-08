@@ -1,0 +1,19 @@
+{
+  "spec_version": 1,
+  "id": "model/error_regression_null_y",
+  "description": "un nulo en y es INVALID_ARGUMENT",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0, 3.0]
+    }
+  ],
+  "y": {
+    "dtype": "float64",
+    "values": [1.0, null, 3.0]
+  },
+  "op": "regression_fit_predict",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

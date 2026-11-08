@@ -1,0 +1,18 @@
+{
+  "spec_version": 1,
+  "id": "model/error_pca_too_many_components",
+  "description": "n_components mayor que min(filas, variables) es INVALID_ARGUMENT",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0, 3.0]
+    }
+  ],
+  "args": {
+    "n_components": 2
+  },
+  "op": "pca_fit_transform",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

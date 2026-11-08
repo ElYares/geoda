@@ -373,6 +373,69 @@ static void prueba_factorizaciones(void) {
     geoda_column_free(wb_col);
 }
 
+/* Regresion y PCA: ajustar, predecir/proyectar, leer los parametros y liberar. */
+static void prueba_modelos(void) {
+    const double xs[] = {0.0, 1.0, 2.0, 3.0}, ys[] = {1.0, 3.0, 5.0, 7.0};
+    struct GeodaColumn *x = columna_plana("g", xs, 4), *y = columna_plana("g", ys, 4);
+    const struct GeodaColumn *matriz[] = {x};
+    struct GeodaRegression *regresion = (struct GeodaRegression *)1;
+    CHECK(geoda_regression_fit(matriz, 1, y, true, &regresion) == GEODA_OK && regresion != NULL);
+    struct GeodaColumn *prediccion = (struct GeodaColumn *)1, *coeficientes = (struct GeodaColumn *)1;
+    CHECK(geoda_regression_predict(regresion, matriz, 1, &prediccion) == GEODA_OK);
+    CHECK(geoda_column_len(prediccion) == 4);
+    geoda_column_free(prediccion);
+    double intercepto = -1.0, r2 = -1.0;
+    CHECK(geoda_regression_params(regresion, &coeficientes, &intercepto, &r2) == GEODA_OK);
+    CHECK(geoda_column_len(coeficientes) == 1 && intercepto > 0.99 && intercepto < 1.01);
+    CHECK(r2 > 0.99);
+    geoda_column_free(coeficientes);
+    /* Otro numero de variables que el ajuste: LENGTH_MISMATCH y `out` en NULL. */
+    const struct GeodaColumn *dos[] = {x, x};
+    prediccion = (struct GeodaColumn *)1;
+    CHECK(geoda_regression_predict(regresion, dos, 2, &prediccion) == GEODA_ERR_LENGTH_MISMATCH);
+    CHECK(prediccion == NULL);
+    CHECK(geoda_regression_predict(NULL, matriz, 1, &prediccion) == GEODA_ERR_INVALID_ARGUMENT);
+    geoda_regression_free(regresion);
+    geoda_regression_free(NULL); /* acepta NULL */
+    /* Variables colineales: INVALID_ARGUMENT y el modelo en NULL. */
+    const struct GeodaColumn *colineales[] = {x, x};
+    regresion = (struct GeodaRegression *)1;
+    CHECK(geoda_regression_fit(colineales, 2, y, true, &regresion) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(regresion == NULL);
+
+    struct GeodaPca *pca = (struct GeodaPca *)1;
+    const double zs[] = {2.0, 4.0, 6.0, 8.0};
+    struct GeodaColumn *z = columna_plana("g", zs, 4);
+    const struct GeodaColumn *tabla[] = {x, z};
+    CHECK(geoda_pca_fit(tabla, 2, 2, &pca) == GEODA_OK && pca != NULL);
+    struct GeodaColumn *proyeccion = (struct GeodaColumn *)1;
+    CHECK(geoda_pca_transform(pca, tabla, 2, &proyeccion) == GEODA_OK);
+    CHECK(geoda_column_len(proyeccion) == 8);
+    geoda_column_free(proyeccion);
+    struct GeodaColumn *componentes = (struct GeodaColumn *)1, *varianza = (struct GeodaColumn *)1;
+    struct GeodaColumn *razon = (struct GeodaColumn *)1, *media = (struct GeodaColumn *)1;
+    CHECK(geoda_pca_params(pca, &componentes, &varianza, &razon, &media) == GEODA_OK);
+    CHECK(geoda_column_len(componentes) == 4 && geoda_column_len(varianza) == 2);
+    CHECK(geoda_column_len(razon) == 2 && geoda_column_len(media) == 2);
+    geoda_column_free(componentes);
+    geoda_column_free(varianza);
+    geoda_column_free(razon);
+    geoda_column_free(media);
+    proyeccion = (struct GeodaColumn *)1;
+    CHECK(geoda_pca_transform(pca, matriz, 1, &proyeccion) == GEODA_ERR_LENGTH_MISMATCH);
+    CHECK(proyeccion == NULL);
+    geoda_pca_free(pca);
+    geoda_pca_free(NULL);
+    /* n_components = 0 y fuera de rango: INVALID_ARGUMENT y el modelo en NULL. */
+    pca = (struct GeodaPca *)1;
+    CHECK(geoda_pca_fit(tabla, 2, 0, &pca) == GEODA_ERR_INVALID_ARGUMENT && pca == NULL);
+    CHECK(geoda_pca_fit(tabla, 2, 3, &pca) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_pca_fit(NULL, 2, 1, &pca) == GEODA_ERR_INVALID_ARGUMENT);
+    geoda_column_free(x);
+    geoda_column_free(y);
+    geoda_column_free(z);
+}
+
 /* Grafos: se crea uno con pesos, se consulta y se libera; los errores dejan los `out` en NULL. */
 static void prueba_grafo(void) {
     /* 0 -> 1 (4), 0 -> 2 (1), 2 -> 1 (2), 1 -> 3 (1); el nodo 4 queda aislado. */
@@ -628,6 +691,7 @@ int main(void) {
     prueba_apriori();
     prueba_algebra();
     prueba_factorizaciones();
+    prueba_modelos();
 
     if (fallos == 0) {
         puts("smoke: ok");

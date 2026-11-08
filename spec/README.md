@@ -96,6 +96,8 @@ no conozca **hace fallar el caso**, no lo salta.
 | `qr` | — | factorizacion QR delgada de `inputs` (`geoda_qr`) | `expect.columns` |
 | `svd` | — | SVD delgada de `inputs` (`geoda_svd`) | `expect.columns` |
 | `lstsq` | — | minimos cuadrados `inputs x ~ input` (`geoda_lstsq`) | `expect.columns` y `expect.residual_norm` |
+| `regression_fit_predict` | `fit_intercept` | ajusta una regresion lineal con `inputs` e `y` y predice `predict_inputs` (`geoda_regression_*`) | `expect.columns`, `expect.intercept` y `expect.r_squared` |
+| `pca_fit_transform` | `n_components` | ajusta un PCA con `inputs` y proyecta `predict_inputs` (`geoda_pca_*`) | `expect.columns` |
 | `graph_bfs` | `source` | recorrido en anchura (`geoda_graph_bfs`) | `expect.columns` |
 | `graph_components` | — | componentes conexas (`geoda_graph_components`) | `expect.columns` y `expect.count` |
 | `graph_topological_order` | — | orden topologico (`geoda_graph_topological_order`) | `expect.columns` |
@@ -263,6 +265,17 @@ columna `float64` plana **por filas** (decision 014, N2), de la que quien llama 
 - `svd`: tres columnas, `u` (`m * k`, plana por filas), `s` (los `k = min(m, n)` valores singulares,
   de mayor a menor) y `vt` (`k * n`, plana por filas). Signo fijo (N4): la mayor entrada de cada
   columna de `V` es positiva. Acepta matrices anchas.
+- `regression_fit_predict` (`args.fit_intercept`, por defecto `true`): `inputs` son las variables, `y` la
+  columna a explicar (`float64`, `int32` o `int64`, sin nulos) y `predict_inputs` (opcional, por defecto
+  `inputs`) las filas a predecir. Salen `coefficients` (uno por variable) y `predictions`; `expect.intercept`
+  (`0` sin intercepto) y `expect.r_squared` (respecto a la media de `y`). Menos filas que coeficientes,
+  variables colineales (`rango incompleto`), nulos o `NaN`, `INVALID_ARGUMENT`; `y` de otro largo o
+  predecir con otro numero de variables, `LENGTH_MISMATCH`.
+- `pca_fit_transform` (`args.n_components`): `inputs` son las variables y `predict_inputs` (opcional) las
+  filas a proyectar. Salen cinco columnas: `components` (`k * d` por filas, un componente por fila),
+  `explained_variance` (`s^2 / (n - 1)`), `explained_variance_ratio`, `mean` y `transformed`
+  (`filas * k` por filas). Signo fijo (N4). `n_components` fuera de `1..=min(filas, d)`, menos de 2
+  filas, nulos o `NaN`, `INVALID_ARGUMENT`; transformar con otro numero de variables, `LENGTH_MISMATCH`.
 - `lstsq`: una columna `x` (los `n` coeficientes) y `expect.residual_norm` (la norma de `A x - b`).
   `m < n` o columnas dependientes, `INVALID_ARGUMENT`; `b` de otro largo, `LENGTH_MISMATCH`.
 

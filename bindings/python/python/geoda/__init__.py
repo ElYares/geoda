@@ -4,6 +4,8 @@ from . import _geoda
 from ._geoda import (
     DecisionTree,
     Graph,
+    LinearRegression,
+    PCA,
     association_rules,
     column_len,
     corr,

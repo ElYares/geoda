@@ -1,0 +1,28 @@
+{
+  "spec_version": 1,
+  "id": "model/error_pca_transform_width",
+  "description": "transformar con otro numero de variables que el ajuste es LENGTH_MISMATCH",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0, 3.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [2.0, 1.0, 4.0]
+    }
+  ],
+  "args": {
+    "n_components": 1
+  },
+  "predict_inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0, 3.0]
+    }
+  ],
+  "op": "pca_fit_transform",
+  "expect": {
+    "error": "LENGTH_MISMATCH"
+  }
+}

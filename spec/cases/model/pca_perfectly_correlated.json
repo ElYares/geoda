@@ -1,0 +1,44 @@
+{
+  "spec_version": 1,
+  "id": "model/pca_perfectly_correlated",
+  "description": "x e y = 2x: el primer componente es (1, 2)/sqrt(5) y explica el 100 %; el segundo es (2, -1)/sqrt(5) (signo N4); la proyeccion sobre el primero es sqrt(5) (x - 3) y sobre el segundo 0",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0, 3.0, 4.0, 5.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [2.0, 4.0, 6.0, 8.0, 10.0]
+    }
+  ],
+  "args": {
+    "n_components": 2
+  },
+  "op": "pca_fit_transform",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "float64",
+        "values": [0.4472135954999579, 0.8944271909999159, 0.8944271909999159, -0.4472135954999579]
+      },
+      {
+        "dtype": "float64",
+        "values": [12.5, 0.0]
+      },
+      {
+        "dtype": "float64",
+        "values": [1.0, 0.0]
+      },
+      {
+        "dtype": "float64",
+        "values": [3.0, 6.0]
+      },
+      {
+        "dtype": "float64",
+        "values": [-4.47213595499958, 0.0, -2.23606797749979, 0.0, 0.0, 0.0, 2.23606797749979, 0.0, 4.47213595499958, 0.0]
+      }
+    ],
+    "tolerance": 1e-09
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "spec_version": 1,
+  "id": "model/pca_one_component_of_three",
+  "description": "con n_components 1 solo sale el primer componente; las otras dos variables son constantes, asi que explica toda la varianza (5/3) y la razon es 1",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [0.0, 1.0, 2.0, 3.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [0.0, 0.0, 0.0, 0.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [0.0, 0.0, 0.0, 0.0]
+    }
+  ],
+  "args": {
+    "n_components": 1
+  },
+  "op": "pca_fit_transform",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "float64",
+        "values": [1.0, 0.0, 0.0]
+      },
+      {
+        "dtype": "float64",
+        "values": [1.6666666666666667]
+      },
+      {
+        "dtype": "float64",
+        "values": [1.0]
+      },
+      {
+        "dtype": "float64",
+        "values": [1.5, 0.0, 0.0]
+      },
+      {
+        "dtype": "float64",
+        "values": [-1.5, -0.5, 0.5, 1.5]
+      }
+    ],
+    "tolerance": 1e-12
+  }
+}

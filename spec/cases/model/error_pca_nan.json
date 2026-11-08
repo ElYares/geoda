@@ -1,0 +1,18 @@
+{
+  "spec_version": 1,
+  "id": "model/error_pca_nan",
+  "description": "un NaN es INVALID_ARGUMENT",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, "NaN", 3.0]
+    }
+  ],
+  "args": {
+    "n_components": 1
+  },
+  "op": "pca_fit_transform",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

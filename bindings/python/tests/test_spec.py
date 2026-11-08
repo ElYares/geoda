@@ -16,7 +16,7 @@ SCALAR_OPS = ("count", "sum", "min", "max", "mean", "var", "std", "corr")
 COLUMNS_OPS = ("histogram", "group_by")
 GRAPH_OPS = ("graph_bfs", "graph_components", "graph_topological_order", "graph_dijkstra", "graph_mst")
 TEXT_OPS = ("edit_distance", "lis", "huffman_encode", "huffman_decode", "dedupe", "dendrogram_cut", "apriori_itemsets", "apriori_rules")
-MATRIX_OPS = ("kmeans", "hierarchical", "tree_fit_predict", "matmul", "lu_solve", "det", "inverse", "qr", "svd", "lstsq")
+MATRIX_OPS = ("kmeans", "hierarchical", "tree_fit_predict", "matmul", "lu_solve", "det", "inverse", "qr", "svd", "lstsq", "regression_fit_predict", "pca_fit_transform")
 OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile") + SCALAR_OPS + COLUMNS_OPS + TEXT_OPS + MATRIX_OPS
 
 
@@ -184,6 +184,9 @@ def run_matrix_case(case, op, expect):
             elif op in ("matmul", "lu_solve", "det", "inverse", "qr", "svd", "lstsq"):
                 outputs, code, extras = _run_linalg(op, case, owned, owned_extra := [])
                 owned.extend(owned_extra)
+            elif op in ("regression_fit_predict", "pca_fit_transform"):
+                outputs, code, extras = _run_model(op, case, owned, owned_extra := [])
+                owned.extend(owned_extra)
             elif op == "tree_fit_predict":
                 outputs, code, extras = _run_tree(case, owned, owned_extra := [])
                 owned.extend(owned_extra)
@@ -209,6 +212,60 @@ def run_matrix_case(case, op, expect):
     finally:
         for handle in (*outputs, *owned):
             handle.close()
+
+
+def _run_model(op, case, train, owned_extra):
+    """Regresion o PCA: ajusta con `train`, lee los parametros y predice (o proyecta) las filas de
+    `predict_inputs` (por defecto, `train`). Devuelve `([columnas], codigo, extras)`; el modelo se
+    libera aqui. Regresion: `[coeficientes, predicciones]` y los extras `intercept` y `r_squared`.
+    PCA: `[componentes, varianza, razon, media, proyeccion]`."""
+    args = case.get("args", {})
+    if op == "regression_fit_predict":
+        y, code = _import(case["y"])
+        if y is not None:
+            owned_extra.append(y)
+        if code != capi.OK:
+            return [], code, {}
+        fit_intercept = args.get("fit_intercept", True)
+        if not isinstance(fit_intercept, bool):
+            raise CaseFailure("args.fit_intercept debe ser un booleano")
+        model, code = capi.regression_fit(train, y, fit_intercept)
+    else:
+        n_components = args.get("n_components")
+        if not isinstance(n_components, int) or isinstance(n_components, bool) or n_components < 0:
+            raise CaseFailure("args.n_components falta o no es un entero >= 0")
+        model, code = capi.pca_fit(train, n_components)
+    if code != capi.OK:
+        return [], code, {}
+    with model:
+        extras = {}
+        if op == "regression_fit_predict":
+            params, code, intercept, r_squared = model.regression_params()
+            extras = {"intercept": intercept, "r_squared": r_squared}
+        else:
+            params, code = model.pca_params()
+        if code != capi.OK:
+            return [], code, {}
+        predict = train
+        if "predict_inputs" in case:
+            predict = []
+            for spec in case["predict_inputs"]:
+                column, code = _import(spec)
+                if column is not None:
+                    owned_extra.append(column)
+                if code != capi.OK:
+                    return params, code, {}
+                predict.append(column)
+        output, code = model.predict(predict)
+        if code != capi.OK:
+            for handle in params:
+                handle.close()
+            return [], code, {}
+        columns = [*params, *output] if op == "pca_fit_transform" else [params[0], *output]
+        if op == "regression_fit_predict":
+            for handle in params[1:]:
+                handle.close()
+        return columns, code, extras
 
 
 def _run_linalg(op, case, a, owned_extra):

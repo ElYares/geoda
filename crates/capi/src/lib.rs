@@ -14,10 +14,11 @@ use std::ffi::c_char;
 use std::ptr;
 
 use geoda_algo::{
-    DecisionTree, KMeansParams, Matrix, Method, Network, Transactions, TreeParams,
-    association_rules, cut_merges, dedupe_column, det, edit_distance_columns, fit_tree_columns,
-    frequent_itemsets, huffman_decode_column, huffman_encode_column, inverse, kmeans_columns,
-    least_squares, lis_column, percentile_column, qr, single_linkage_columns, solve, svd,
+    DecisionTree, KMeansParams, LinearRegression, Matrix, Method, Network, Pca, Transactions,
+    TreeParams, association_rules, cut_merges, dedupe_column, det, edit_distance_columns,
+    fit_pca_columns, fit_regression_columns, fit_tree_columns, frequent_itemsets,
+    huffman_decode_column, huffman_encode_column, inverse, kmeans_columns, least_squares,
+    lis_column, percentile_column, qr, single_linkage_columns, solve, svd,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -73,6 +74,12 @@ fn int64_column(values: &[i64]) -> Result<Column, Error> {
     }
     builder.finish()
 }
+
+/// Regresion lineal ajustada. Opaca para C: solo se maneja por puntero.
+pub struct GeodaRegression(LinearRegression);
+
+/// PCA ajustado. Opaco para C: solo se maneja por puntero.
+pub struct GeodaPca(Pca);
 
 /// Arbol de decision entrenado. Opaco para C: solo se maneja por puntero.
 pub struct GeodaTree(DecisionTree);
@@ -1962,6 +1969,256 @@ pub unsafe extern "C" fn geoda_lstsq(
         }
         Ok(())
     })
+}
+
+/// Ajusta una regresion lineal `y = b0 + b1 x1 + ...` por minimos cuadrados (QR de Householder).
+/// `columns` son las `n_columns` variables explicativas (`Int32`, `Int64` o `Float64`, sin nulos ni
+/// `NaN`) e `y` la columna a explicar. Con `fit_intercept` el modelo lleva `b0`; sin el pasa por el
+/// origen. Devuelve un handle nuevo por `*out`.
+///
+/// Se libera con `geoda_regression_free`. Si falla, devuelve un codigo negativo y `*out` queda en NULL:
+/// `GEODA_ERR_INVALID_ARGUMENT` si `columns` es NULL o `n_columns` es 0, hay nulos o no finitos, hay
+/// menos filas que coeficientes o las variables son colineales (`rango incompleto`);
+/// `GEODA_ERR_LENGTH_MISMATCH` si las columnas o `y` miden distinto.
+///
+/// # Safety
+/// `columns` debe apuntar a `n_columns` handles validos, `y` ser un handle valido y `out` escribible y
+/// no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_regression_fit(
+    columns: *const *const GeodaColumn,
+    n_columns: usize,
+    y: *const GeodaColumn,
+    fit_intercept: bool,
+    out: *mut *mut GeodaRegression,
+) -> i32 {
+    guard(|| {
+        if out.is_null() {
+            return Err(invalid_argument("out es NULL"));
+        }
+        // SAFETY: no es NULL (arriba) y el llamador lo garantiza escribible.
+        unsafe { *out = ptr::null_mut() };
+        // SAFETY: contratos de `column_list` y `column_ref`.
+        let (columns, y) = unsafe { (column_list(columns, n_columns)?, column_ref(y, "y")?) };
+        let model = fit_regression_columns(&columns, y, fit_intercept)?;
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { *out = Box::into_raw(Box::new(GeodaRegression(model))) };
+        Ok(())
+    })
+}
+
+/// Predice `b0 + sum(bi * xi)` para cada fila de `n_columns` variables. Devuelve una columna `Float64`
+/// nueva por `*out`.
+///
+/// `*out` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y `*out` queda en
+/// NULL: `GEODA_ERR_INVALID_ARGUMENT` si `model` o `columns` son NULL, `n_columns` es 0 o hay nulos o no
+/// finitos; `GEODA_ERR_LENGTH_MISMATCH` si `n_columns` no es el numero de variables del ajuste o las
+/// columnas miden distinto.
+///
+/// # Safety
+/// `model` debe ser un handle valido, `columns` apuntar a `n_columns` handles validos y `out`
+/// escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_regression_predict(
+    model: *const GeodaRegression,
+    columns: *const *const GeodaColumn,
+    n_columns: usize,
+    out: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out]) }?;
+        // SAFETY: `as_ref` revisa NULL; la validez del handle es contrato.
+        let Some(GeodaRegression(model)) = (unsafe { model.as_ref() }) else {
+            return Err(invalid_argument("model es NULL"));
+        };
+        // SAFETY: contrato de `column_list`.
+        let columns = unsafe { column_list(columns, n_columns) }?;
+        let predicted = float64_column(&model.predict_columns(&columns)?)?;
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { *out = into_handle(predicted) };
+        Ok(())
+    })
+}
+
+/// Lee el modelo ajustado: devuelve una columna `Float64` nueva por `*out_coefficients` (un
+/// coeficiente por variable, en el orden de las columnas) y escribe el intercepto (`0` si se ajusto
+/// sin el) en `*out_intercept` y el `R^2` en `*out_r_squared`.
+///
+/// `*out_coefficients` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo,
+/// `*out_coefficients` queda en NULL y los escalares no se escriben: `GEODA_ERR_INVALID_ARGUMENT` si
+/// `model` o un `out` es NULL.
+///
+/// # Safety
+/// `model` debe ser un handle valido y los tres `out` escribibles y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_regression_params(
+    model: *const GeodaRegression,
+    out_coefficients: *mut *mut GeodaColumn,
+    out_intercept: *mut f64,
+    out_r_squared: *mut f64,
+) -> i32 {
+    guard(|| {
+        if out_intercept.is_null() || out_r_squared.is_null() {
+            return Err(invalid_argument("un out es NULL"));
+        }
+        // SAFETY: `out_coefficients` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out_coefficients]) }?;
+        // SAFETY: `as_ref` revisa NULL; la validez del handle es contrato.
+        let Some(GeodaRegression(model)) = (unsafe { model.as_ref() }) else {
+            return Err(invalid_argument("model es NULL"));
+        };
+        let coefficients = float64_column(&model.coefficients)?;
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_coefficients = into_handle(coefficients);
+            *out_intercept = model.intercept;
+            *out_r_squared = model.r_squared;
+        }
+        Ok(())
+    })
+}
+
+/// Libera una regresion. Acepta NULL (no hace nada). Despues de llamarla el handle ya no es valido;
+/// liberarlo dos veces es comportamiento indefinido.
+///
+/// # Safety
+/// `model` debe ser NULL o un handle devuelto por `geoda_regression_fit` y no liberado aun.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_regression_free(model: *mut GeodaRegression) {
+    let _ = guard(|| {
+        if !model.is_null() {
+            // SAFETY: handle creado con `Box::into_raw` y aun no liberado (contrato).
+            drop(unsafe { Box::from_raw(model) });
+        }
+        Ok(())
+    });
+}
+
+/// Ajusta un PCA de `n_components` componentes a `n_columns` variables (`Int32`, `Int64` o `Float64`,
+/// sin nulos ni `NaN`): centra cada variable (sin escalar) y toma la SVD de los datos centrados.
+/// Devuelve un handle nuevo por `*out`.
+///
+/// Se libera con `geoda_pca_free`. Si falla, devuelve un codigo negativo y `*out` queda en NULL:
+/// `GEODA_ERR_INVALID_ARGUMENT` si `columns` es NULL o `n_columns` es 0, hay menos de 2 filas,
+/// `n_components` no esta entre 1 y `min(filas, n_columns)`, hay nulos o no finitos;
+/// `GEODA_ERR_LENGTH_MISMATCH` si las columnas miden distinto.
+///
+/// # Safety
+/// `columns` debe apuntar a `n_columns` handles validos y `out` ser escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_pca_fit(
+    columns: *const *const GeodaColumn,
+    n_columns: usize,
+    n_components: usize,
+    out: *mut *mut GeodaPca,
+) -> i32 {
+    guard(|| {
+        if out.is_null() {
+            return Err(invalid_argument("out es NULL"));
+        }
+        // SAFETY: no es NULL (arriba) y el llamador lo garantiza escribible.
+        unsafe { *out = ptr::null_mut() };
+        // SAFETY: contrato de `column_list`.
+        let columns = unsafe { column_list(columns, n_columns) }?;
+        let model = fit_pca_columns(&columns, n_components)?;
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { *out = Box::into_raw(Box::new(GeodaPca(model))) };
+        Ok(())
+    })
+}
+
+/// Proyecta `n_columns` variables sobre los componentes: `(X - media) * componentes^T`. Devuelve una
+/// columna `Float64` nueva por `*out` con las `filas * k` entradas **por filas** (`k` componentes).
+///
+/// `*out` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y `*out` queda en
+/// NULL: `GEODA_ERR_INVALID_ARGUMENT` si `model` o `columns` son NULL, `n_columns` es 0 o hay nulos o no
+/// finitos; `GEODA_ERR_LENGTH_MISMATCH` si `n_columns` no es el numero de variables del ajuste.
+///
+/// # Safety
+/// `model` debe ser un handle valido, `columns` apuntar a `n_columns` handles validos y `out`
+/// escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_pca_transform(
+    model: *const GeodaPca,
+    columns: *const *const GeodaColumn,
+    n_columns: usize,
+    out: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out]) }?;
+        // SAFETY: `as_ref` revisa NULL; la validez del handle es contrato.
+        let Some(GeodaPca(model)) = (unsafe { model.as_ref() }) else {
+            return Err(invalid_argument("model es NULL"));
+        };
+        // SAFETY: contrato de `column_list`.
+        let columns = unsafe { column_list(columns, n_columns) }?;
+        let projected = matrix_column(&model.transform_columns(&columns)?)?;
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { *out = into_handle(projected) };
+        Ok(())
+    })
+}
+
+/// Lee el modelo ajustado. Devuelve **cuatro columnas `Float64` nuevas**:
+///
+/// - `*out_components`: `k * d` valores por filas (un componente por fila; `d` variables).
+/// - `*out_variance`: `k` varianzas explicadas (`s^2 / (n - 1)`), de mayor a menor.
+/// - `*out_ratio`: `k` razones de la varianza total.
+/// - `*out_mean`: `d` medias con las que se centra.
+///
+/// Cada columna se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y los cuatro
+/// `out` quedan en NULL: `GEODA_ERR_INVALID_ARGUMENT` si `model` es NULL.
+///
+/// # Safety
+/// `model` debe ser un handle valido y los cuatro `out` escribibles y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_pca_params(
+    model: *const GeodaPca,
+    out_components: *mut *mut GeodaColumn,
+    out_variance: *mut *mut GeodaColumn,
+    out_ratio: *mut *mut GeodaColumn,
+    out_mean: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: los `out` son escribibles si no son NULL (contrato).
+        unsafe { null_outs(&[out_components, out_variance, out_ratio, out_mean]) }?;
+        // SAFETY: `as_ref` revisa NULL; la validez del handle es contrato.
+        let Some(GeodaPca(model)) = (unsafe { model.as_ref() }) else {
+            return Err(invalid_argument("model es NULL"));
+        };
+        let (components, variance, ratio, mean) = (
+            matrix_column(&model.components)?,
+            float64_column(&model.explained_variance)?,
+            float64_column(&model.explained_variance_ratio)?,
+            float64_column(&model.mean)?,
+        );
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_components = into_handle(components);
+            *out_variance = into_handle(variance);
+            *out_ratio = into_handle(ratio);
+            *out_mean = into_handle(mean);
+        }
+        Ok(())
+    })
+}
+
+/// Libera un PCA. Acepta NULL (no hace nada). Despues de llamarla el handle ya no es valido; liberarlo
+/// dos veces es comportamiento indefinido.
+///
+/// # Safety
+/// `model` debe ser NULL o un handle devuelto por `geoda_pca_fit` y no liberado aun.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_pca_free(model: *mut GeodaPca) {
+    let _ = guard(|| {
+        if !model.is_null() {
+            // SAFETY: handle creado con `Box::into_raw` y aun no liberado (contrato).
+            drop(unsafe { Box::from_raw(model) });
+        }
+        Ok(())
+    });
 }
 
 /// Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle

@@ -48,6 +48,8 @@ Los nulos se ignoran. Un `NaN` en los datos da `NaN` en el resultado, nunca se o
 | `qr(a)` | `dict` con `q` y `r` (listas de filas): `a = q r` por Householder, con al menos tantas filas como columnas |
 | `svd(a)` | `dict` con `u`, `s` y `vt`: SVD delgada con valores de mayor a menor y signo fijo (la mayor entrada de cada columna de `V` es positiva) |
 | `lstsq(a, b)` | coeficientes `x` que minimizan `\|a x - b\|`; `ValueError` si las columnas son dependientes |
+| `LinearRegression(fit_intercept=True)` | `.fit(columnas, y)` ajusta por minimos cuadrados (QR) y devuelve el modelo; `.predict(columnas)`; `.coef_`, `.intercept_` y `.r2_`. `ValueError` si las variables son colineales |
+| `PCA(n_components)` | `.fit(columnas)` centra (sin escalar) y usa la SVD; `.transform(columnas)` da una lista de filas; `.components_`, `.explained_variance_`, `.explained_variance_ratio_` y `.mean_`. Signo determinista |
 | `lis(x)` | `dict` con `length` e `indices`: la subsecuencia estrictamente creciente mas larga. `None` o `NaN` lanzan `ValueError` |
 | `huffman_encode(datos)` | `dict` con `bits` (`bytes`, empaquetados desde el bit mas alto), `bit_len` y `frequencies` (256 `int`). `datos` es `bytes`, `bytearray` o `str` (UTF-8) |
 | `huffman_decode(bits, bit_len, frequencies)` | `bytes`; la tabla se reconstruye de las frecuencias. Bits que no se pueden decodificar lanzan `ValueError` |
@@ -90,6 +92,7 @@ VIRTUAL_ENV=$PWD/.venv .venv/bin/maturin develop
   Hace lo mismo que `crates/capi/tests/spec.rs`.
 - `tests/test_interop_pyarrow.py`: pyarrow como oraculo de Arrow, en ambos sentidos.
   Se salta si `pyarrow` no esta instalado; en CI debe correr.
+- `tests/test_model.py`: `LinearRegression`, `PCA` y los casos de `spec/cases/model/`.
 - `tests/test_linalg.py`: `matmul`, `solve`, `det`, `inv` y los casos de `spec/cases/linalg/`.
 - `tests/test_apriori.py`: `frequent_itemsets`, `association_rules` y los casos de `spec/cases/apriori/`.
 - `tests/test_tree.py`: `DecisionTree` y los casos de `spec/cases/tree/`.

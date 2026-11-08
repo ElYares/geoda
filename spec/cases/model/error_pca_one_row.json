@@ -1,0 +1,22 @@
+{
+  "spec_version": 1,
+  "id": "model/error_pca_one_row",
+  "description": "con una sola fila no hay varianza muestral: INVALID_ARGUMENT",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [2.0]
+    }
+  ],
+  "args": {
+    "n_components": 1
+  },
+  "op": "pca_fit_transform",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

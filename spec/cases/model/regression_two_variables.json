@@ -1,0 +1,35 @@
+{
+  "spec_version": 1,
+  "id": "model/regression_two_variables",
+  "description": "y = 1 + 2 x1 - 3 x2 exacta: coeficientes [2, -3] en el orden de las columnas e intercepto 1",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0, 3.0, 4.0, 5.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [2.0, 1.0, 4.0, 3.0, 7.0]
+    }
+  ],
+  "y": {
+    "dtype": "float64",
+    "values": [-3.0, 2.0, -5.0, 0.0, -10.0]
+  },
+  "op": "regression_fit_predict",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "float64",
+        "values": [2.0, -3.0]
+      },
+      {
+        "dtype": "float64",
+        "values": [-3.0, 2.0, -5.0, 0.0, -10.0]
+      }
+    ],
+    "intercept": 1.0,
+    "r_squared": 1.0,
+    "tolerance": 1e-09
+  }
+}

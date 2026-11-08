@@ -257,6 +257,40 @@ def _load():
             ],
             ctypes.c_int32,
         ),
+        "geoda_regression_fit": (
+            [
+                ctypes.POINTER(p_handle),
+                ctypes.c_size_t,
+                p_handle,
+                ctypes.c_bool,
+                ctypes.POINTER(p_handle),
+            ],
+            ctypes.c_int32,
+        ),
+        "geoda_regression_predict": (
+            [p_handle, ctypes.POINTER(p_handle), ctypes.c_size_t, ctypes.POINTER(p_handle)],
+            ctypes.c_int32,
+        ),
+        "geoda_regression_params": (
+            [
+                p_handle,
+                ctypes.POINTER(p_handle),
+                ctypes.POINTER(ctypes.c_double),
+                ctypes.POINTER(ctypes.c_double),
+            ],
+            ctypes.c_int32,
+        ),
+        "geoda_regression_free": ([p_handle], None),
+        "geoda_pca_fit": (
+            [ctypes.POINTER(p_handle), ctypes.c_size_t, ctypes.c_size_t, ctypes.POINTER(p_handle)],
+            ctypes.c_int32,
+        ),
+        "geoda_pca_transform": (
+            [p_handle, ctypes.POINTER(p_handle), ctypes.c_size_t, ctypes.POINTER(p_handle)],
+            ctypes.c_int32,
+        ),
+        "geoda_pca_params": ([p_handle] + [ctypes.POINTER(p_handle)] * 4, ctypes.c_int32),
+        "geoda_pca_free": ([p_handle], None),
         "geoda_dendrogram_cut": (
             [p_handle, p_handle, ctypes.c_size_t, ctypes.c_size_t, ctypes.POINTER(p_handle)],
             ctypes.c_int32,
@@ -609,6 +643,79 @@ def hierarchical(columns):
         _handle_array(columns), len(columns), *(ctypes.byref(o) for o in outs)
     )
     return Column._own(outs, code)
+
+
+class Model:
+    """Regresion o PCA de la capi (`kind` = `regression` o `pca`). Se libera con `close()`."""
+
+    def __init__(self, kind, handle):
+        self.kind, self.handle = kind, handle
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def close(self):
+        if self.handle:
+            getattr(LIB, f"geoda_{self.kind}_free")(self.handle)
+            self.handle = None
+
+    def predict(self, columns):
+        """`([salida], 0)` o `([], codigo)`: `predict` de la regresion o `transform` del PCA."""
+        name = "regression_predict" if self.kind == "regression" else "pca_transform"
+        outs = [ctypes.c_void_p(None)]
+        code = getattr(LIB, f"geoda_{name}")(
+            self.handle, _handle_array(columns), len(columns), ctypes.byref(outs[0])
+        )
+        return Column._own(outs, code)
+
+    def regression_params(self):
+        """`([coeficientes], 0, intercepto, r2)` o `([], codigo, None, None)`."""
+        outs = [ctypes.c_void_p(None)]
+        intercept, r_squared = ctypes.c_double(float("nan")), ctypes.c_double(float("nan"))
+        code = LIB.geoda_regression_params(
+            self.handle, ctypes.byref(outs[0]), ctypes.byref(intercept), ctypes.byref(r_squared)
+        )
+        handles, code = Column._own(outs, code)
+        if code != OK:
+            return handles, code, None, None
+        return handles, code, intercept.value, r_squared.value
+
+    def pca_params(self):
+        """`([componentes, varianza, razon, media], 0)` o `([], codigo)`."""
+        outs = [ctypes.c_void_p(None) for _ in range(4)]
+        code = LIB.geoda_pca_params(self.handle, *(ctypes.byref(o) for o in outs))
+        return Column._own(outs, code)
+
+
+def regression_fit(columns, y, fit_intercept):
+    """`(Model | None, codigo)`."""
+    out = ctypes.c_void_p(None)
+    code = LIB.geoda_regression_fit(
+        _handle_array(columns), len(columns), y.handle, fit_intercept, ctypes.byref(out)
+    )
+    return _wrap_model("regression", out, code)
+
+
+def pca_fit(columns, n_components):
+    """`(Model | None, codigo)`."""
+    out = ctypes.c_void_p(None)
+    code = LIB.geoda_pca_fit(
+        _handle_array(columns), len(columns), n_components, ctypes.byref(out)
+    )
+    return _wrap_model("pca", out, code)
+
+
+def _wrap_model(kind, out, code):
+    if code != OK:
+        if out.value:
+            raise AssertionError("la capi fallo pero dejo el modelo sin poner en NULL")
+        return None, code
+    if not out.value:
+        raise AssertionError("la capi devolvio GEODA_OK con un modelo NULL")
+    return Model(kind, out.value), code
 
 
 class Tree:

@@ -100,6 +100,12 @@ typedef struct GeodaColumn GeodaColumn;
 // Grafo de geoda con o sin pesos. Opaco para C: solo se maneja por puntero.
 typedef struct GeodaGraph GeodaGraph;
 
+// PCA ajustado. Opaco para C: solo se maneja por puntero.
+typedef struct GeodaPca GeodaPca;
+
+// Regresion lineal ajustada. Opaca para C: solo se maneja por puntero.
+typedef struct GeodaRegression GeodaRegression;
+
 // Arbol de decision entrenado. Opaco para C: solo se maneja por puntero.
 typedef struct GeodaTree GeodaTree;
 
@@ -872,6 +878,119 @@ int32_t geoda_lstsq(const struct GeodaColumn *const *a,
                     const struct GeodaColumn *b,
                     struct GeodaColumn **out_x,
                     double *out_residual);
+
+// Ajusta una regresion lineal `y = b0 + b1 x1 + ...` por minimos cuadrados (QR de Householder).
+// `columns` son las `n_columns` variables explicativas (`Int32`, `Int64` o `Float64`, sin nulos ni
+// `NaN`) e `y` la columna a explicar. Con `fit_intercept` el modelo lleva `b0`; sin el pasa por el
+// origen. Devuelve un handle nuevo por `*out`.
+//
+// Se libera con `geoda_regression_free`. Si falla, devuelve un codigo negativo y `*out` queda en NULL:
+// `GEODA_ERR_INVALID_ARGUMENT` si `columns` es NULL o `n_columns` es 0, hay nulos o no finitos, hay
+// menos filas que coeficientes o las variables son colineales (`rango incompleto`);
+// `GEODA_ERR_LENGTH_MISMATCH` si las columnas o `y` miden distinto.
+//
+// # Safety
+// `columns` debe apuntar a `n_columns` handles validos, `y` ser un handle valido y `out` escribible y
+// no NULL.
+int32_t geoda_regression_fit(const struct GeodaColumn *const *columns,
+                             size_t n_columns,
+                             const struct GeodaColumn *y,
+                             bool fit_intercept,
+                             struct GeodaRegression **out);
+
+// Predice `b0 + sum(bi * xi)` para cada fila de `n_columns` variables. Devuelve una columna `Float64`
+// nueva por `*out`.
+//
+// `*out` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y `*out` queda en
+// NULL: `GEODA_ERR_INVALID_ARGUMENT` si `model` o `columns` son NULL, `n_columns` es 0 o hay nulos o no
+// finitos; `GEODA_ERR_LENGTH_MISMATCH` si `n_columns` no es el numero de variables del ajuste o las
+// columnas miden distinto.
+//
+// # Safety
+// `model` debe ser un handle valido, `columns` apuntar a `n_columns` handles validos y `out`
+// escribible y no NULL.
+int32_t geoda_regression_predict(const struct GeodaRegression *model,
+                                 const struct GeodaColumn *const *columns,
+                                 size_t n_columns,
+                                 struct GeodaColumn **out);
+
+// Lee el modelo ajustado: devuelve una columna `Float64` nueva por `*out_coefficients` (un
+// coeficiente por variable, en el orden de las columnas) y escribe el intercepto (`0` si se ajusto
+// sin el) en `*out_intercept` y el `R^2` en `*out_r_squared`.
+//
+// `*out_coefficients` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo,
+// `*out_coefficients` queda en NULL y los escalares no se escriben: `GEODA_ERR_INVALID_ARGUMENT` si
+// `model` o un `out` es NULL.
+//
+// # Safety
+// `model` debe ser un handle valido y los tres `out` escribibles y no NULL.
+int32_t geoda_regression_params(const struct GeodaRegression *model,
+                                struct GeodaColumn **out_coefficients,
+                                double *out_intercept,
+                                double *out_r_squared);
+
+// Libera una regresion. Acepta NULL (no hace nada). Despues de llamarla el handle ya no es valido;
+// liberarlo dos veces es comportamiento indefinido.
+//
+// # Safety
+// `model` debe ser NULL o un handle devuelto por `geoda_regression_fit` y no liberado aun.
+void geoda_regression_free(struct GeodaRegression *model);
+
+// Ajusta un PCA de `n_components` componentes a `n_columns` variables (`Int32`, `Int64` o `Float64`,
+// sin nulos ni `NaN`): centra cada variable (sin escalar) y toma la SVD de los datos centrados.
+// Devuelve un handle nuevo por `*out`.
+//
+// Se libera con `geoda_pca_free`. Si falla, devuelve un codigo negativo y `*out` queda en NULL:
+// `GEODA_ERR_INVALID_ARGUMENT` si `columns` es NULL o `n_columns` es 0, hay menos de 2 filas,
+// `n_components` no esta entre 1 y `min(filas, n_columns)`, hay nulos o no finitos;
+// `GEODA_ERR_LENGTH_MISMATCH` si las columnas miden distinto.
+//
+// # Safety
+// `columns` debe apuntar a `n_columns` handles validos y `out` ser escribible y no NULL.
+int32_t geoda_pca_fit(const struct GeodaColumn *const *columns,
+                      size_t n_columns,
+                      size_t n_components,
+                      struct GeodaPca **out);
+
+// Proyecta `n_columns` variables sobre los componentes: `(X - media) * componentes^T`. Devuelve una
+// columna `Float64` nueva por `*out` con las `filas * k` entradas **por filas** (`k` componentes).
+//
+// `*out` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y `*out` queda en
+// NULL: `GEODA_ERR_INVALID_ARGUMENT` si `model` o `columns` son NULL, `n_columns` es 0 o hay nulos o no
+// finitos; `GEODA_ERR_LENGTH_MISMATCH` si `n_columns` no es el numero de variables del ajuste.
+//
+// # Safety
+// `model` debe ser un handle valido, `columns` apuntar a `n_columns` handles validos y `out`
+// escribible y no NULL.
+int32_t geoda_pca_transform(const struct GeodaPca *model,
+                            const struct GeodaColumn *const *columns,
+                            size_t n_columns,
+                            struct GeodaColumn **out);
+
+// Lee el modelo ajustado. Devuelve **cuatro columnas `Float64` nuevas**:
+//
+// - `*out_components`: `k * d` valores por filas (un componente por fila; `d` variables).
+// - `*out_variance`: `k` varianzas explicadas (`s^2 / (n - 1)`), de mayor a menor.
+// - `*out_ratio`: `k` razones de la varianza total.
+// - `*out_mean`: `d` medias con las que se centra.
+//
+// Cada columna se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y los cuatro
+// `out` quedan en NULL: `GEODA_ERR_INVALID_ARGUMENT` si `model` es NULL.
+//
+// # Safety
+// `model` debe ser un handle valido y los cuatro `out` escribibles y no NULL.
+int32_t geoda_pca_params(const struct GeodaPca *model,
+                         struct GeodaColumn **out_components,
+                         struct GeodaColumn **out_variance,
+                         struct GeodaColumn **out_ratio,
+                         struct GeodaColumn **out_mean);
+
+// Libera un PCA. Acepta NULL (no hace nada). Despues de llamarla el handle ya no es valido; liberarlo
+// dos veces es comportamiento indefinido.
+//
+// # Safety
+// `model` debe ser NULL o un handle devuelto por `geoda_pca_fit` y no liberado aun.
+void geoda_pca_free(struct GeodaPca *model);
 
 // Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 // ya no es valido; liberarlo dos veces es comportamiento indefinido.
