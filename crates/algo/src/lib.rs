@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod apriori;
 pub mod components;
 pub mod dedupe;
 pub mod edit;
@@ -27,6 +28,9 @@ pub mod text;
 pub mod traverse;
 pub mod tree;
 
+pub use apriori::{
+    FrequentItemsets, MAX_RULE_ITEMS, Rule, Transactions, association_rules, frequent_itemsets,
+};
 pub use components::{Components, UnionFind, components, topological_order};
 pub use dedupe::{Dedupe, MAX_INDEXED_DISTANCE, dedupe_column, dedupe_similar};
 pub use edit::{edit_distance, edit_distance_within};

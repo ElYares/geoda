@@ -21,9 +21,9 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use geoda_algo::{
-    Dataset, Graph, Huffman, KMeansParams, TreeParams, WeightedGraph, bfs, dedupe_similar, dfs,
-    dijkstra, edit_distance, fit_tree, kmeans, lis, median_of_medians, merge_sort, quickselect,
-    single_linkage,
+    Dataset, Graph, Huffman, KMeansParams, Transactions, TreeParams, WeightedGraph,
+    association_rules, bfs, dedupe_similar, dfs, dijkstra, edit_distance, fit_tree,
+    frequent_itemsets, kmeans, lis, median_of_medians, merge_sort, quickselect, single_linkage,
 };
 use geoda_core::file::{ColumnFileReader, ColumnFileWriter};
 use geoda_core::{Column, DataType, PrimitiveBuilder};
@@ -437,6 +437,7 @@ fn unit(rng: &mut Rng) -> f64 {
 }
 
 /// Mineria: k-means de 100 000 filas x 4 variables con k = 8.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // el item sale de un real en [0, 100)
 fn bench_mining() {
     let mut rng = Rng(SEED);
     let columns = blobs(&mut rng, 100_000, 4, 8);
@@ -477,6 +478,34 @@ fn bench_mining() {
         ms(fit_time),
         ms(started.elapsed())
     );
+
+    // Apriori: 10 000 transacciones de 5 a 15 items sobre 100; los items bajos son mas populares.
+    let lists: Vec<Vec<i64>> = (0..10_000)
+        .map(|_| {
+            let len = 5 + usize::try_from(rng.next() % 11).expect("cabe");
+            (0..len)
+                .map(|_| {
+                    // Producto de dos uniformes: sesgado hacia los items pequenos.
+                    let skew = unit(&mut rng) * unit(&mut rng);
+                    i64::from(u32::try_from((skew * 100.0) as u64).expect("menor que 100"))
+                })
+                .collect()
+        })
+        .collect();
+    let transactions = Transactions::from_lists(&lists).expect("transacciones");
+    for min_support in [500, 200] {
+        let started = Instant::now();
+        let frequent = frequent_itemsets(black_box(&transactions), min_support).expect("apriori");
+        let mined = started.elapsed();
+        let rules = association_rules(&frequent, 0.1).expect("reglas");
+        println!(
+            "apriori de {} transacciones, soporte >= {min_support}: {} conjuntos en {} ms, {} reglas con confianza >= 0.1",
+            transactions.len(),
+            frequent.itemsets.len(),
+            ms(mined),
+            rules.len()
+        );
+    }
 
     // Jerarquico: 2000 y 5000 filas (el tope), n(n-1)/2 aristas por el MST.
     for rows in [2000, 5000] {
