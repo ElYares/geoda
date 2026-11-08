@@ -13,13 +13,15 @@
 //! cargo run --release -p geoda-bench -- file 250000000    # archivo de 2 GB leido por trozos
 //! cargo run --release -p geoda-bench -- graph              # BFS y DFS de 1M nodos y 10M aristas
 //! cargo run --release -p geoda-bench -- graph 1000000 10000000   # incluye Dijkstra
+//! cargo run --release -p geoda-bench -- text              # distancia de edicion de 20 000 caracteres
 //! ```
 
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use geoda_algo::{
-    Graph, WeightedGraph, bfs, dfs, dijkstra, median_of_medians, merge_sort, quickselect,
+    Graph, WeightedGraph, bfs, dfs, dijkstra, edit_distance, median_of_medians, merge_sort,
+    quickselect,
 };
 use geoda_core::file::{ColumnFileReader, ColumnFileWriter};
 use geoda_core::{Column, DataType, PrimitiveBuilder};
@@ -308,11 +310,42 @@ fn bench_graph(nodes: usize, edges: usize) {
     );
 }
 
+/// Cadena aleatoria de `len` letras minusculas con la semilla fija.
+fn random_text(rng: &mut Rng, len: usize) -> String {
+    (0..len)
+        .map(|_| char::from(b'a' + u8::try_from(rng.next() % 26).expect("cabe")))
+        .collect()
+}
+
+/// Distancia de edicion de dos cadenas de `len` caracteres: tiempo y memoria residente
+/// (dos filas, no la tabla de `len * len` celdas).
+fn bench_text(len: usize) {
+    let mut rng = Rng(SEED);
+    let (a, b) = (random_text(&mut rng, len), random_text(&mut rng, len));
+    let started = Instant::now();
+    let distance = black_box(edit_distance(black_box(&a), black_box(&b)));
+    println!(
+        "\ndistancia de edicion de dos cadenas de {len} caracteres: {distance} en {} ms",
+        ms(started.elapsed())
+    );
+    match peak_resident_mib() {
+        Some(mib) => println!("pico de memoria residente: {mib:.1} MiB"),
+        None => println!("pico de memoria residente: no disponible (solo Linux)"),
+    }
+}
+
 fn ms(d: Duration) -> String {
     format!("{:.2}", d.as_secs_f64() * 1000.0)
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("text") {
+        let len: usize = std::env::args().nth(2).map_or(20_000, |a| {
+            a.parse().expect("la longitud debe ser un entero")
+        });
+        bench_text(len);
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("graph") {
         let nodes: usize = std::env::args().nth(2).map_or(1_000_000, |a| {
             a.parse().expect("los nodos deben ser un entero")

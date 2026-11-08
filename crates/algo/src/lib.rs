@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod components;
+pub mod edit;
 pub mod graph;
 pub mod hash;
 pub mod heap;
@@ -19,6 +20,7 @@ pub mod spanning;
 pub mod traverse;
 
 pub use components::{Components, UnionFind, components, topological_order};
+pub use edit::{edit_distance, edit_distance_within};
 pub use graph::{Graph, WeightedGraph};
 pub use hash::{Grouping, HashTable, Key, Value, ValueCounts, group_column, value_counts_column};
 pub use heap::{Heap, top_k, top_k_column};
