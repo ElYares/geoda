@@ -100,6 +100,9 @@ typedef struct GeodaColumn GeodaColumn;
 // Grafo de geoda con o sin pesos. Opaco para C: solo se maneja por puntero.
 typedef struct GeodaGraph GeodaGraph;
 
+// Arbol de decision entrenado. Opaco para C: solo se maneja por puntero.
+typedef struct GeodaTree GeodaTree;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -653,6 +656,58 @@ int32_t geoda_dendrogram_cut(const struct GeodaColumn *left,
                              size_t n,
                              size_t k,
                              struct GeodaColumn **out_labels);
+
+// Entrena un arbol de decision de clasificacion (CART con impureza de Gini) con una matriz de
+// `n_columns` columnas (`Int32`, `Int64` o `Float64`, sin nulos ni `NaN`) y una columna `Int64` de
+// etiquetas (`>= 0`, sin nulos; pueden ser dispersas). Devuelve un handle nuevo por `*out`.
+//
+// `max_depth` es la profundidad maxima (0 = una sola hoja) y `min_samples_leaf` las filas
+// minimas por hoja (al menos 1). El arbol es determinista: la misma entrada da el mismo arbol.
+//
+// Se libera con `geoda_tree_free`. Si falla, devuelve un codigo negativo y `*out` queda en NULL:
+// `GEODA_ERR_INVALID_ARGUMENT` si `columns` es NULL o `n_columns` es 0, no hay filas, hay nulos o
+// no finitos, una etiqueta es negativa o `min_samples_leaf` es 0; `GEODA_ERR_LENGTH_MISMATCH` si
+// las columnas o las etiquetas miden distinto; `GEODA_ERR_TYPE_MISMATCH` si las etiquetas no son
+// `Int64`.
+//
+// # Safety
+// `columns` debe apuntar a `n_columns` handles validos, `labels` ser un handle valido y `out`
+// escribible y no NULL.
+int32_t geoda_tree_fit(const struct GeodaColumn *const *columns,
+                       size_t n_columns,
+                       const struct GeodaColumn *labels,
+                       size_t max_depth,
+                       size_t min_samples_leaf,
+                       struct GeodaTree **out);
+
+// Predice la clase de cada fila de una matriz de `n_columns` columnas. Devuelve una columna
+// `Int64` nueva por `*out_labels` con las mismas etiquetas con las que se entreno.
+//
+// `*out_labels` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y
+// `*out_labels` queda en NULL: `GEODA_ERR_INVALID_ARGUMENT` si `tree` o `columns` son NULL,
+// `n_columns` es 0, hay nulos o no finitos; `GEODA_ERR_LENGTH_MISMATCH` si `n_columns` no es el
+// numero de variables del entrenamiento o las columnas miden distinto.
+//
+// # Safety
+// `tree` debe ser un handle valido, `columns` apuntar a `n_columns` handles validos y
+// `out_labels` ser escribible y no NULL.
+int32_t geoda_tree_predict(const struct GeodaTree *tree,
+                           const struct GeodaColumn *const *columns,
+                           size_t n_columns,
+                           struct GeodaColumn **out_labels);
+
+// Cantidad de nodos del arbol (hojas incluidas), o un codigo de error negativo si `tree` es NULL.
+//
+// # Safety
+// `tree` debe ser NULL o un handle valido.
+int64_t geoda_tree_node_count(const struct GeodaTree *tree);
+
+// Libera un arbol. Acepta NULL (no hace nada). Despues de llamarla el handle ya no es valido;
+// liberarlo dos veces es comportamiento indefinido.
+//
+// # Safety
+// `tree` debe ser NULL o un handle devuelto por `geoda_tree_fit` y no liberado aun.
+void geoda_tree_free(struct GeodaTree *tree);
 
 // Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 // ya no es valido; liberarlo dos veces es comportamiento indefinido.

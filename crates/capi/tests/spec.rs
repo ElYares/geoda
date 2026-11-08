@@ -16,7 +16,7 @@ use geoda::{
     GEODA_AGG_COUNT, GEODA_AGG_MAX, GEODA_AGG_MEAN, GEODA_AGG_MIN, GEODA_AGG_STD, GEODA_AGG_SUM,
     GEODA_AGG_VAR, GEODA_ERR_ALLOC, GEODA_ERR_FFI, GEODA_ERR_INTERNAL, GEODA_ERR_INVALID_ARGUMENT,
     GEODA_ERR_LENGTH_MISMATCH, GEODA_ERR_OUT_OF_BOUNDS, GEODA_ERR_PANIC, GEODA_ERR_TYPE_MISMATCH,
-    GEODA_ERR_UNSUPPORTED, GEODA_OK, GeodaColumn, GeodaGraph, geoda_column_corr,
+    GEODA_ERR_UNSUPPORTED, GEODA_OK, GeodaColumn, GeodaGraph, GeodaTree, geoda_column_corr,
     geoda_column_count, geoda_column_dedupe, geoda_column_edit_distance, geoda_column_free,
     geoda_column_from_arrow, geoda_column_group_by, geoda_column_histogram, geoda_column_len,
     geoda_column_lis, geoda_column_max_f64, geoda_column_max_i64, geoda_column_mean,
@@ -26,6 +26,7 @@ use geoda::{
     geoda_graph_bfs, geoda_graph_components, geoda_graph_dijkstra, geoda_graph_free,
     geoda_graph_mst, geoda_graph_new, geoda_graph_topological_order, geoda_hierarchical,
     geoda_huffman_decode, geoda_huffman_encode, geoda_kmeans, geoda_last_error_message,
+    geoda_tree_fit, geoda_tree_free, geoda_tree_node_count, geoda_tree_predict,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -601,8 +602,77 @@ fn run_matrix_op(op: &str, case: &Value, inputs: &Value) -> Result<OpResult, Str
             };
             collect_with_extras(code, &outs, Vec::new())
         }
+        "tree_fit_predict" => run_tree(case, &pointers),
         otro => Err(format!("op de matriz desconocida: {otro:?}")),
     }
+}
+
+/// Arbol de la capi que se libera solo al salir de alcance.
+struct TreeGuard(*mut GeodaTree);
+
+impl Drop for TreeGuard {
+    fn drop(&mut self) {
+        // SAFETY: el handle viene de `geoda_tree_fit` y se libera una sola vez, aqui.
+        unsafe { geoda_tree_free(self.0) };
+    }
+}
+
+/// Arbol de un caso: se entrena con `inputs` y `labels` y se predice `predict_inputs` (por defecto
+/// los mismos `inputs`). El arbol se libera al salir.
+fn run_tree(case: &Value, train: &[*const GeodaColumn]) -> Result<OpResult, String> {
+    let labels = match import_through_capi(case.get("labels").ok_or("labels falta")?)? {
+        Ok(handle) => handle,
+        Err(code) => return Ok(Err(code)),
+    };
+    let max_depth = match case["args"].get("max_depth") {
+        None | Some(Value::Null) => 8,
+        Some(_) => usize_arg(case, "max_depth")?,
+    };
+    let min_leaf = match case["args"].get("min_samples_leaf") {
+        None | Some(Value::Null) => 1,
+        Some(_) => usize_arg(case, "min_samples_leaf")?,
+    };
+    let mut tree: *mut GeodaTree = ptr::null_mut();
+    // SAFETY: handles validos, arreglo de punteros y `out` escribible.
+    let code = unsafe {
+        geoda_tree_fit(
+            train.as_ptr(),
+            train.len(),
+            labels.0,
+            max_depth,
+            min_leaf,
+            &raw mut tree,
+        )
+    };
+    if code != GEODA_OK {
+        if !tree.is_null() {
+            return Err("la capi fallo pero dejo el arbol sin poner en NULL".into());
+        }
+        return Ok(Err(code));
+    }
+    let tree = TreeGuard(tree);
+    // SAFETY: handle valido.
+    let nodes = unsafe { geoda_tree_node_count(tree.0) };
+    let mut extra_owned = Vec::new();
+    let predict: Vec<*const GeodaColumn> = match case.get("predict_inputs") {
+        None => train.to_vec(),
+        Some(specs) => {
+            for spec in specs
+                .as_array()
+                .ok_or("predict_inputs debe ser una lista")?
+            {
+                match import_through_capi(spec)? {
+                    Ok(handle) => extra_owned.push(handle),
+                    Err(code) => return Ok(Err(code)),
+                }
+            }
+            extra_owned.iter().map(|h| h.0.cast_const()).collect()
+        }
+    };
+    let mut out: *mut GeodaColumn = ptr::null_mut();
+    // SAFETY: arbol y columnas validos, `out` escribible.
+    let code = unsafe { geoda_tree_predict(tree.0, predict.as_ptr(), predict.len(), &raw mut out) };
+    collect_with_extras(code, &[out], vec![("nodes", Extra::Int(nodes))])
 }
 
 /// Como `collect_outs`, pero con escalares con nombre que se comparan con `expect`.

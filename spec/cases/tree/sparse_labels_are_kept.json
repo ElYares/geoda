@@ -1,0 +1,25 @@
+{
+  "spec_version": 1,
+  "id": "tree/sparse_labels_are_kept",
+  "description": "las etiquetas dispersas se devuelven tal cual",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0, 30.0, 40.0]
+    }
+  ],
+  "labels": {
+    "dtype": "int64",
+    "values": [5, 5, 1000, 1000]
+  },
+  "op": "tree_fit_predict",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int64",
+        "values": [5, 5, 1000, 1000]
+      }
+    ],
+    "nodes": 3
+  }
+}

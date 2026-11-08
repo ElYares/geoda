@@ -2,7 +2,7 @@
 //! estadisticos escalares (`count`, `sum`, `min`, `max`, `mean`, `var`, `std`, `corr`), `histogram`
 //! y `group_aggregate` (la base de `geoda.group_by`), la clase `Graph` (fase 4) y el texto de la fase 5 (`edit_distance`, `dedupe`, `lis`,
 //! `huffman_encode` y `huffman_decode`), el clustering de la fase 6 (`kmeans`,
-//! `hierarchical` y `cut_tree`).
+//! `hierarchical` y `cut_tree`) y el arbol de decision (`DecisionTree`).
 //!
 //! Todas las funciones numericas aceptan una lista o cualquier objeto con el protocolo Arrow
 //! `PyCapsule` (`__arrow_c_array__`): `pyarrow`, `polars`, `pandas` con Arrow... (S10). Los
@@ -15,14 +15,14 @@
 #![allow(unsafe_code)]
 
 use pyo3::IntoPyObjectExt;
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList};
 
 use geoda_algo::{
-    Huffman, KMeansParams, Method, Network, Value, cut_merges, dedupe_column,
-    edit_distance_columns, frequencies, huffman_from_counts, kmeans_columns, lis_column,
-    median_column, percentile_column, single_linkage_columns,
+    Dataset, DecisionTree as Tree, Huffman, KMeansParams, Method, Network, TreeParams, Value,
+    cut_merges, dedupe_column, edit_distance_columns, fit_tree, frequencies, huffman_from_counts,
+    kmeans_columns, lis_column, median_column, percentile_column, single_linkage_columns,
 };
 use geoda_core::interop::arrow_c::{ArrowArray, ArrowSchema, import_column};
 use geoda_core::{Column, DataType, Error, PrimitiveBuilder, Utf8Builder};
@@ -544,6 +544,105 @@ fn cut_tree(dendrogram: &Bound<'_, PyDict>, k: usize) -> PyResult<Vec<usize>> {
     cut_merges(n, &left, &right, k).map_err(|e| value_error(&e))
 }
 
+/// Etiquetas de clase de entrada: una lista de enteros o una columna Arrow `Int32`/`Int64`, sin
+/// nulos.
+fn class_labels(labels: &Bound<'_, PyAny>) -> PyResult<Vec<i64>> {
+    if labels.hasattr("__arrow_c_array__")? {
+        let column = arrow_column(labels)?;
+        if column.null_count() > 0 {
+            return Err(PyValueError::new_err("las etiquetas tienen nulos"));
+        }
+        return match column.dtype() {
+            DataType::Int64 => Ok(column
+                .values::<i64>()
+                .map_err(|e| value_error(&e))?
+                .to_vec()),
+            DataType::Int32 => Ok(column
+                .values::<i32>()
+                .map_err(|e| value_error(&e))?
+                .iter()
+                .map(|&v| i64::from(v))
+                .collect()),
+            other => Err(PyTypeError::new_err(format!(
+                "las etiquetas deben ser enteros, no {other:?}"
+            ))),
+        };
+    }
+    labels.extract()
+}
+
+/// Arbol de decision de clasificacion (CART con impureza de Gini, solo variables numericas).
+///
+/// `DecisionTree(max_depth=8, min_samples_leaf=1).fit(columnas, etiquetas)` entrena y devuelve el
+/// propio arbol; `predict(columnas)` da la clase de cada fila. `columnas` es una lista de columnas
+/// (una por variable, sin `None` ni `NaN`) y las etiquetas, enteros `>= 0` (pueden ser dispersos).
+/// Es determinista: los mismos datos dan el mismo arbol.
+///
+/// # Errors
+/// `ValueError` si las columnas o las etiquetas miden distinto, hay nulos o no finitos, una etiqueta
+/// es negativa, no hay filas, o `min_samples_leaf` es 0; `RuntimeError` si se predice antes de
+/// entrenar.
+#[pyclass(module = "geoda")]
+struct DecisionTree {
+    max_depth: usize,
+    min_samples_leaf: usize,
+    tree: Option<Tree>,
+}
+
+#[pymethods]
+impl DecisionTree {
+    #[new]
+    #[pyo3(signature = (max_depth=8, min_samples_leaf=1))]
+    fn new(max_depth: usize, min_samples_leaf: usize) -> Self {
+        Self {
+            max_depth,
+            min_samples_leaf,
+            tree: None,
+        }
+    }
+
+    /// Entrena el arbol (descarta el anterior) y lo devuelve.
+    fn fit<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        columns: &Bound<'py, PyAny>,
+        labels: &Bound<'py, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let owned = matrix_columns(columns)?;
+        let refs: Vec<&Column> = owned.iter().collect();
+        let labels = class_labels(labels)?;
+        let data = Dataset::from_columns(&refs).map_err(|e| value_error(&e))?;
+        let params = TreeParams {
+            max_depth: slf.max_depth,
+            min_samples_leaf: slf.min_samples_leaf,
+        };
+        slf.tree = Some(fit_tree(&data, &labels, params).map_err(|e| value_error(&e))?);
+        Ok(slf)
+    }
+
+    /// Clase que predice el arbol para cada fila.
+    fn predict(&self, columns: &Bound<'_, PyAny>) -> PyResult<Vec<i64>> {
+        let tree = self
+            .tree
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("el arbol no esta entrenado: llama a fit()"))?;
+        let owned = matrix_columns(columns)?;
+        let refs: Vec<&Column> = owned.iter().collect();
+        tree.predict_columns(&refs).map_err(|e| value_error(&e))
+    }
+
+    /// Cantidad de nodos (hojas incluidas), o 0 si no esta entrenado.
+    #[getter]
+    fn n_nodes(&self) -> usize {
+        self.tree.as_ref().map_or(0, |t| t.nodes().len())
+    }
+
+    /// Profundidad del arbol (0 si es una sola hoja o no esta entrenado).
+    #[getter]
+    fn depth(&self) -> usize {
+        self.tree.as_ref().map_or(0, Tree::depth)
+    }
+}
+
 /// Subsecuencia estrictamente creciente mas larga (LIS) de una lista de numeros o una columna
 /// Arrow numerica. Devuelve `{"length": int, "indices": [int]}` con las posiciones de sus
 /// elementos, de menor a mayor.
@@ -749,6 +848,7 @@ fn _geoda(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(kmeans, m)?)?;
     m.add_function(wrap_pyfunction!(hierarchical, m)?)?;
     m.add_function(wrap_pyfunction!(cut_tree, m)?)?;
+    m.add_class::<DecisionTree>()?;
     m.add_function(wrap_pyfunction!(huffman_encode, m)?)?;
     m.add_function(wrap_pyfunction!(huffman_decode, m)?)?;
     m.add_class::<Graph>()?;

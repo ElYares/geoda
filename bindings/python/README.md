@@ -38,6 +38,7 @@ Los nulos se ignoran. Un `NaN` en los datos da `NaN` en el resultado, nunca se o
 | `kmeans(columnas, k, seed=0, max_iter=100, tol=1e-4)` | `dict` con `labels`, `centroids` (lista de `k` listas, una por grupo), `inertia` e `iterations`. `columnas` es una lista de columnas (una por variable); sin `None` ni `NaN`. La semilla fija el resultado |
 | `hierarchical(columnas)` | `dict` con `n`, `left`, `right`, `height` y `size`: el dendrograma de enlace simple (hasta 5000 filas) al estilo de `scipy` |
 | `cut_tree(dendrograma, k)` | lista con el grupo (`0..k`) de cada fila |
+| `DecisionTree(max_depth=8, min_samples_leaf=1)` | `.fit(columnas, etiquetas)` entrena (CART con Gini, solo variables numericas) y devuelve el propio arbol; `.predict(columnas)` da la clase de cada fila; `.n_nodes` y `.depth`. Etiquetas enteros `>= 0`. Determinista |
 | `lis(x)` | `dict` con `length` e `indices`: la subsecuencia estrictamente creciente mas larga. `None` o `NaN` lanzan `ValueError` |
 | `huffman_encode(datos)` | `dict` con `bits` (`bytes`, empaquetados desde el bit mas alto), `bit_len` y `frequencies` (256 `int`). `datos` es `bytes`, `bytearray` o `str` (UTF-8) |
 | `huffman_decode(bits, bit_len, frequencies)` | `bytes`; la tabla se reconstruye de las frecuencias. Bits que no se pueden decodificar lanzan `ValueError` |
@@ -80,6 +81,7 @@ VIRTUAL_ENV=$PWD/.venv .venv/bin/maturin develop
   Hace lo mismo que `crates/capi/tests/spec.rs`.
 - `tests/test_interop_pyarrow.py`: pyarrow como oraculo de Arrow, en ambos sentidos.
   Se salta si `pyarrow` no esta instalado; en CI debe correr.
+- `tests/test_tree.py`: `DecisionTree` y los casos de `spec/cases/tree/`.
 - `tests/test_cluster.py`: `kmeans`, `hierarchical`, `cut_tree` y los casos de `spec/cases/cluster/`.
 - `tests/test_text.py`: la fase 5 (distancia de edicion, LIS y Huffman) y los casos de
   `spec/cases/text/` que se pueden ejecutar por el binding.

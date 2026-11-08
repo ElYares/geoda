@@ -1,0 +1,19 @@
+{
+  "spec_version": 1,
+  "id": "tree/error_null_label",
+  "description": "una etiqueta nula es INVALID_ARGUMENT",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0]
+    }
+  ],
+  "labels": {
+    "dtype": "int64",
+    "values": [0, null]
+  },
+  "op": "tree_fit_predict",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

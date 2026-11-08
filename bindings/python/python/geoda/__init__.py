@@ -2,6 +2,7 @@
 
 from . import _geoda
 from ._geoda import (
+    DecisionTree,
     Graph,
     column_len,
     corr,

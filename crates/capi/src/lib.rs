@@ -14,9 +14,9 @@ use std::ffi::c_char;
 use std::ptr;
 
 use geoda_algo::{
-    KMeansParams, Method, Network, cut_merges, dedupe_column, edit_distance_columns,
-    huffman_decode_column, huffman_encode_column, kmeans_columns, lis_column, percentile_column,
-    single_linkage_columns,
+    DecisionTree, KMeansParams, Method, Network, TreeParams, cut_merges, dedupe_column,
+    edit_distance_columns, fit_tree_columns, huffman_decode_column, huffman_encode_column,
+    kmeans_columns, lis_column, percentile_column, single_linkage_columns,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -72,6 +72,9 @@ fn int64_column(values: &[i64]) -> Result<Column, Error> {
     }
     builder.finish()
 }
+
+/// Arbol de decision entrenado. Opaco para C: solo se maneja por puntero.
+pub struct GeodaTree(DecisionTree);
 
 /// Grafo de geoda con o sin pesos. Opaco para C: solo se maneja por puntero.
 pub struct GeodaGraph(Network);
@@ -1450,6 +1453,128 @@ pub unsafe extern "C" fn geoda_dendrogram_cut(
         unsafe { *out_labels = into_handle(labels) };
         Ok(())
     })
+}
+
+/// Entrena un arbol de decision de clasificacion (CART con impureza de Gini) con una matriz de
+/// `n_columns` columnas (`Int32`, `Int64` o `Float64`, sin nulos ni `NaN`) y una columna `Int64` de
+/// etiquetas (`>= 0`, sin nulos; pueden ser dispersas). Devuelve un handle nuevo por `*out`.
+///
+/// `max_depth` es la profundidad maxima (0 = una sola hoja) y `min_samples_leaf` las filas
+/// minimas por hoja (al menos 1). El arbol es determinista: la misma entrada da el mismo arbol.
+///
+/// Se libera con `geoda_tree_free`. Si falla, devuelve un codigo negativo y `*out` queda en NULL:
+/// `GEODA_ERR_INVALID_ARGUMENT` si `columns` es NULL o `n_columns` es 0, no hay filas, hay nulos o
+/// no finitos, una etiqueta es negativa o `min_samples_leaf` es 0; `GEODA_ERR_LENGTH_MISMATCH` si
+/// las columnas o las etiquetas miden distinto; `GEODA_ERR_TYPE_MISMATCH` si las etiquetas no son
+/// `Int64`.
+///
+/// # Safety
+/// `columns` debe apuntar a `n_columns` handles validos, `labels` ser un handle valido y `out`
+/// escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_tree_fit(
+    columns: *const *const GeodaColumn,
+    n_columns: usize,
+    labels: *const GeodaColumn,
+    max_depth: usize,
+    min_samples_leaf: usize,
+    out: *mut *mut GeodaTree,
+) -> i32 {
+    guard(|| {
+        if out.is_null() {
+            return Err(invalid_argument("out es NULL"));
+        }
+        // SAFETY: no es NULL (arriba) y el llamador lo garantiza escribible.
+        unsafe { *out = ptr::null_mut() };
+        // SAFETY: contratos de `column_list` y `column_ref`.
+        let (columns, labels) = unsafe {
+            (
+                column_list(columns, n_columns)?,
+                column_ref(labels, "labels")?,
+            )
+        };
+        let params = TreeParams {
+            max_depth,
+            min_samples_leaf,
+        };
+        let tree = fit_tree_columns(&columns, labels, params)?;
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { *out = Box::into_raw(Box::new(GeodaTree(tree))) };
+        Ok(())
+    })
+}
+
+/// Predice la clase de cada fila de una matriz de `n_columns` columnas. Devuelve una columna
+/// `Int64` nueva por `*out_labels` con las mismas etiquetas con las que se entreno.
+///
+/// `*out_labels` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y
+/// `*out_labels` queda en NULL: `GEODA_ERR_INVALID_ARGUMENT` si `tree` o `columns` son NULL,
+/// `n_columns` es 0, hay nulos o no finitos; `GEODA_ERR_LENGTH_MISMATCH` si `n_columns` no es el
+/// numero de variables del entrenamiento o las columnas miden distinto.
+///
+/// # Safety
+/// `tree` debe ser un handle valido, `columns` apuntar a `n_columns` handles validos y
+/// `out_labels` ser escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_tree_predict(
+    tree: *const GeodaTree,
+    columns: *const *const GeodaColumn,
+    n_columns: usize,
+    out_labels: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out_labels` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out_labels]) }?;
+        // SAFETY: `as_ref` revisa NULL; la validez del handle es contrato.
+        let Some(GeodaTree(tree)) = (unsafe { tree.as_ref() }) else {
+            return Err(invalid_argument("tree es NULL"));
+        };
+        // SAFETY: contrato de `column_list`.
+        let columns = unsafe { column_list(columns, n_columns) }?;
+        let predicted = tree.predict_columns(&columns)?;
+        let labels = int64_column(&predicted)?;
+        // SAFETY: `out_labels` es escribible (arriba).
+        unsafe { *out_labels = into_handle(labels) };
+        Ok(())
+    })
+}
+
+/// Cantidad de nodos del arbol (hojas incluidas), o un codigo de error negativo si `tree` es NULL.
+///
+/// # Safety
+/// `tree` debe ser NULL o un handle valido.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_tree_node_count(tree: *const GeodaTree) -> i64 {
+    let mut count = 0;
+    let code = guard(|| {
+        // SAFETY: `as_ref` revisa NULL; la validez del handle es contrato.
+        let Some(GeodaTree(tree)) = (unsafe { tree.as_ref() }) else {
+            return Err(invalid_argument("tree es NULL"));
+        };
+        count = to_i64(tree.nodes().len())?;
+        Ok(())
+    });
+    if code == GEODA_OK {
+        count
+    } else {
+        i64::from(code)
+    }
+}
+
+/// Libera un arbol. Acepta NULL (no hace nada). Despues de llamarla el handle ya no es valido;
+/// liberarlo dos veces es comportamiento indefinido.
+///
+/// # Safety
+/// `tree` debe ser NULL o un handle devuelto por `geoda_tree_fit` y no liberado aun.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_tree_free(tree: *mut GeodaTree) {
+    let _ = guard(|| {
+        if !tree.is_null() {
+            // SAFETY: handle creado con `Box::into_raw` y aun no liberado (contrato).
+            drop(unsafe { Box::from_raw(tree) });
+        }
+        Ok(())
+    });
 }
 
 /// Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle

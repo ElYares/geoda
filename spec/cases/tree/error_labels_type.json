@@ -1,0 +1,19 @@
+{
+  "spec_version": 1,
+  "id": "tree/error_labels_type",
+  "description": "las etiquetas deben ser int64: TYPE_MISMATCH",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0]
+    }
+  ],
+  "labels": {
+    "dtype": "float64",
+    "values": [0.0, 1.0]
+  },
+  "op": "tree_fit_predict",
+  "expect": {
+    "error": "TYPE_MISMATCH"
+  }
+}

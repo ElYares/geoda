@@ -198,6 +198,23 @@ def _load():
             [ctypes.POINTER(p_handle), ctypes.c_size_t] + [ctypes.POINTER(p_handle)] * 4,
             ctypes.c_int32,
         ),
+        "geoda_tree_fit": (
+            [
+                ctypes.POINTER(p_handle),
+                ctypes.c_size_t,
+                p_handle,
+                ctypes.c_size_t,
+                ctypes.c_size_t,
+                ctypes.POINTER(p_handle),
+            ],
+            ctypes.c_int32,
+        ),
+        "geoda_tree_predict": (
+            [p_handle, ctypes.POINTER(p_handle), ctypes.c_size_t, ctypes.POINTER(p_handle)],
+            ctypes.c_int32,
+        ),
+        "geoda_tree_node_count": ([p_handle], ctypes.c_int64),
+        "geoda_tree_free": ([p_handle], None),
         "geoda_dendrogram_cut": (
             [p_handle, p_handle, ctypes.c_size_t, ctypes.c_size_t, ctypes.POINTER(p_handle)],
             ctypes.c_int32,
@@ -475,6 +492,55 @@ def hierarchical(columns):
         _handle_array(columns), len(columns), *(ctypes.byref(o) for o in outs)
     )
     return Column._own(outs, code)
+
+
+class Tree:
+    """Arbol de decision de la capi. Se libera con `close()` o como gestor de contexto."""
+
+    def __init__(self, handle):
+        self.handle = handle
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def close(self):
+        if self.handle:
+            LIB.geoda_tree_free(self.handle)
+            self.handle = None
+
+    def node_count(self):
+        return LIB.geoda_tree_node_count(self.handle)
+
+    def predict(self, columns):
+        """`([labels], 0)` o `([], codigo)`."""
+        outs = [ctypes.c_void_p(None)]
+        code = LIB.geoda_tree_predict(
+            self.handle, _handle_array(columns), len(columns), ctypes.byref(outs[0])
+        )
+        return Column._own(outs, code)
+
+
+def tree_fit(columns, labels, max_depth, min_samples_leaf):
+    """`(Tree | None, codigo)`. Si falla, el `out` queda en NULL."""
+    out = ctypes.c_void_p(None)
+    code = LIB.geoda_tree_fit(
+        _handle_array(columns),
+        len(columns),
+        labels.handle,
+        max_depth,
+        min_samples_leaf,
+        ctypes.byref(out),
+    )
+    if code != OK:
+        if out.value:
+            raise AssertionError("la capi fallo pero dejo el arbol sin poner en NULL")
+        return None, code
+    if not out.value:
+        raise AssertionError("la capi devolvio GEODA_OK con un arbol NULL")
+    return Tree(out.value), code
 
 
 def graph_new(n, from_column, to_column, weights_column, directed):

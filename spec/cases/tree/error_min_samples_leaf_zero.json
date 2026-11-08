@@ -1,0 +1,22 @@
+{
+  "spec_version": 1,
+  "id": "tree/error_min_samples_leaf_zero",
+  "description": "min_samples_leaf = 0 es INVALID_ARGUMENT",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0]
+    }
+  ],
+  "labels": {
+    "dtype": "int64",
+    "values": [0, 1]
+  },
+  "args": {
+    "min_samples_leaf": 0
+  },
+  "op": "tree_fit_predict",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

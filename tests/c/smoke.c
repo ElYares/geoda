@@ -201,6 +201,41 @@ static void prueba_cluster(void) {
     geoda_column_free(y);
 }
 
+/* Arbol: entrenar, predecir y liberar; los errores dejan los `out` en NULL. */
+static void prueba_arbol(void) {
+    const double xs[] = {1.0, 2.0, 3.0, 10.0, 11.0, 12.0};
+    const long long etiquetas[] = {0, 0, 0, 1, 1, 1};
+    struct GeodaColumn *x = columna_plana("g", xs, 6);
+    struct GeodaColumn *y = columna_plana("l", etiquetas, 6);
+    const struct GeodaColumn *matriz[] = {x};
+    struct GeodaTree *arbol = (struct GeodaTree *)1;
+    CHECK(geoda_tree_fit(matriz, 1, y, 8, 1, &arbol) == GEODA_OK);
+    CHECK(arbol != NULL && geoda_tree_node_count(arbol) == 3);
+    struct GeodaColumn *prediccion = (struct GeodaColumn *)1;
+    CHECK(geoda_tree_predict(arbol, matriz, 1, &prediccion) == GEODA_OK);
+    CHECK(geoda_column_len(prediccion) == 6);
+    geoda_column_free(prediccion);
+    /* Otro numero de variables que el entrenamiento: LENGTH_MISMATCH y `out` en NULL. */
+    const struct GeodaColumn *dos[] = {x, x};
+    prediccion = (struct GeodaColumn *)1;
+    CHECK(geoda_tree_predict(arbol, dos, 2, &prediccion) == GEODA_ERR_LENGTH_MISMATCH);
+    CHECK(prediccion == NULL);
+    CHECK(geoda_tree_predict(NULL, matriz, 1, &prediccion) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_tree_node_count(NULL) == GEODA_ERR_INVALID_ARGUMENT);
+    geoda_tree_free(arbol);
+    geoda_tree_free(NULL); /* acepta NULL */
+    /* Errores al entrenar: min_samples_leaf = 0 y etiquetas Float64. */
+    arbol = (struct GeodaTree *)1;
+    CHECK(geoda_tree_fit(matriz, 1, y, 8, 0, &arbol) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(arbol == NULL);
+    arbol = (struct GeodaTree *)1;
+    CHECK(geoda_tree_fit(matriz, 1, x, 8, 1, &arbol) == GEODA_ERR_TYPE_MISMATCH);
+    CHECK(arbol == NULL);
+    CHECK(geoda_tree_fit(NULL, 1, y, 8, 1, &arbol) == GEODA_ERR_INVALID_ARGUMENT);
+    geoda_column_free(x);
+    geoda_column_free(y);
+}
+
 /* Grafos: se crea uno con pesos, se consulta y se libera; los errores dejan los `out` en NULL. */
 static void prueba_grafo(void) {
     /* 0 -> 1 (4), 0 -> 2 (1), 2 -> 1 (2), 1 -> 3 (1); el nodo 4 queda aislado. */
@@ -452,6 +487,7 @@ int main(void) {
     prueba_grafo();
     prueba_texto();
     prueba_cluster();
+    prueba_arbol();
 
     if (fallos == 0) {
         puts("smoke: ok");

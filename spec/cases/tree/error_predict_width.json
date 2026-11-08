@@ -1,0 +1,29 @@
+{
+  "spec_version": 1,
+  "id": "tree/error_predict_width",
+  "description": "predecir con otro numero de variables que el entrenamiento es LENGTH_MISMATCH",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0, 3.0, 10.0, 11.0, 12.0]
+    }
+  ],
+  "labels": {
+    "dtype": "int64",
+    "values": [0, 0, 0, 1, 1, 1]
+  },
+  "predict_inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0, 3.0, 10.0, 11.0, 12.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0, 3.0, 10.0, 11.0, 12.0]
+    }
+  ],
+  "op": "tree_fit_predict",
+  "expect": {
+    "error": "LENGTH_MISMATCH"
+  }
+}

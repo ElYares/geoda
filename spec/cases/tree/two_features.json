@@ -1,0 +1,29 @@
+{
+  "spec_version": 1,
+  "id": "tree/two_features",
+  "description": "la segunda variable es la que separa las clases",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 1.0, 1.0, 1.0]
+    },
+    {
+      "dtype": "int32",
+      "values": [1, 2, 8, 9]
+    }
+  ],
+  "labels": {
+    "dtype": "int64",
+    "values": [0, 0, 1, 1]
+  },
+  "op": "tree_fit_predict",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int64",
+        "values": [0, 0, 1, 1]
+      }
+    ],
+    "nodes": 3
+  }
+}

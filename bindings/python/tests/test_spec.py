@@ -16,7 +16,7 @@ SCALAR_OPS = ("count", "sum", "min", "max", "mean", "var", "std", "corr")
 COLUMNS_OPS = ("histogram", "group_by")
 GRAPH_OPS = ("graph_bfs", "graph_components", "graph_topological_order", "graph_dijkstra", "graph_mst")
 TEXT_OPS = ("edit_distance", "lis", "huffman_encode", "huffman_decode", "dedupe", "dendrogram_cut")
-MATRIX_OPS = ("kmeans", "hierarchical")
+MATRIX_OPS = ("kmeans", "hierarchical", "tree_fit_predict")
 OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile") + SCALAR_OPS + COLUMNS_OPS + TEXT_OPS + MATRIX_OPS
 
 
@@ -181,6 +181,9 @@ def run_matrix_case(case, op, expect):
                     args["seed"],
                 )
                 extras = {"inertia": inertia, "iterations": iterations}
+            elif op == "tree_fit_predict":
+                outputs, code, extras = _run_tree(case, owned, owned_extra := [])
+                owned.extend(owned_extra)
             else:
                 outputs, code = capi.hierarchical(owned)
         if code != capi.OK:
@@ -200,6 +203,34 @@ def run_matrix_case(case, op, expect):
     finally:
         for handle in (*outputs, *owned):
             handle.close()
+
+
+def _run_tree(case, train, owned_extra):
+    """Entrena con `train` y `case["labels"]` y predice `predict_inputs` (por defecto, `train`).
+    Devuelve `([predicciones], codigo, {"nodes": n})`. El arbol se libera aqui."""
+    args = case.get("args", {})
+    labels, code = _import(case["labels"])
+    if code != capi.OK:
+        return [], code, {}
+    owned_extra.append(labels)
+    tree, code = capi.tree_fit(
+        train, labels, args.get("max_depth", 8), args.get("min_samples_leaf", 1)
+    )
+    if code != capi.OK:
+        return [], code, {}
+    with tree:
+        predict = train
+        if "predict_inputs" in case:
+            predict = []
+            for spec in case["predict_inputs"]:
+                column, code = _import(spec)
+                if column is not None:
+                    owned_extra.append(column)
+                if code != capi.OK:
+                    return [], code, {}
+                predict.append(column)
+        outputs, code = tree.predict(predict)
+        return outputs, code, {"nodes": tree.node_count()}
 
 
 def _workers(case):

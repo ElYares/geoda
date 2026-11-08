@@ -1,0 +1,19 @@
+{
+  "spec_version": 1,
+  "id": "tree/error_no_rows",
+  "description": "sin filas no hay nada que entrenar: INVALID_ARGUMENT",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": []
+    }
+  ],
+  "labels": {
+    "dtype": "int64",
+    "values": []
+  },
+  "op": "tree_fit_predict",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

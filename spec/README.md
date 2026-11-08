@@ -86,6 +86,7 @@ no conozca **hace fallar el caso**, no lo salta.
 | `kmeans` | `k`, `seed`, `max_iter`, `tol` | k-means sobre `inputs` (`geoda_kmeans`) | `expect.columns`, `expect.inertia` y `expect.iterations` |
 | `hierarchical` | — | dendrograma de enlace simple sobre `inputs` (`geoda_hierarchical`) | `expect.columns` |
 | `dendrogram_cut` | `n`, `k` | corta un dendrograma dado por `input` (left) e `input2` (right) (`geoda_dendrogram_cut`) | `expect.columns` |
+| `tree_fit_predict` | `max_depth`, `min_samples_leaf` | entrena un arbol con `inputs` y `labels` y predice `predict_inputs` (`geoda_tree_fit` y `geoda_tree_predict`) | `expect.columns` y `expect.nodes` |
 | `graph_bfs` | `source` | recorrido en anchura (`geoda_graph_bfs`) | `expect.columns` |
 | `graph_components` | — | componentes conexas (`geoda_graph_components`) | `expect.columns` y `expect.count` |
 | `graph_topological_order` | — | orden topologico (`geoda_graph_topological_order`) | `expect.columns` |
@@ -170,7 +171,7 @@ la consulta. Las columnas de resultado, en este orden:
   (`float64`, en ese orden) y `expect.components` cuantas componentes tiene el grafo. Sin pesos es
   `TYPE_MISMATCH`; dirigido, `INVALID_ARGUMENT`.
 
-`expect.count`, `total` y `components` se comparan exactos (el flotante bit a bit); igual `inertia` e `iterations`.
+`expect.count`, `total`, `components`, `nodes`, `inertia` e `iterations` se comparan exactos (el flotante bit a bit).
 
 #### Texto y similitud (fase 5)
 
@@ -210,6 +211,14 @@ Una matriz de datos es una **lista de columnas** (una por variable): un caso de 
 - `hierarchical`: salen `left`, `right`, `height` y `size` (`n - 1` filas cada una; vacias con una
   sola fila). Los grupos `0..n` son las filas y la union `s` crea el grupo `n + s`. Mas de 5000 filas
   es `INVALID_ARGUMENT`.
+- `tree_fit_predict` (`args.max_depth` por defecto 8, `args.min_samples_leaf` por defecto 1): `inputs`
+  son las variables de entrenamiento, `labels` una columna `int64` (>= 0, sin nulos; puede ser dispersa)
+  y `predict_inputs` (opcional, por defecto `inputs`) las filas a predecir. Sale una columna `int64`
+  con la clase de cada fila y `expect.nodes` es la cantidad de nodos del arbol (hojas incluidas). El
+  arbol es determinista (desempates: menor impureza, menor variable, menor umbral; en una hoja con
+  clases empatadas, la menor). Etiquetas negativas o nulas, `min_samples_leaf = 0` o sin filas son
+  `INVALID_ARGUMENT`; etiquetas que no son `int64`, `TYPE_MISMATCH`; etiquetas de otro largo,
+  `LENGTH_MISMATCH`; predecir con otro numero de variables, `LENGTH_MISMATCH`.
 - `dendrogram_cut` (`args.n`, `args.k`): `input` es `left` e `input2` es `right` (`int64`, `n - 1`
   filas); sale `labels` (`int64`, `0..k`, numerados por la primera fila de cada grupo). `k` fuera de
   `1..=n`, un largo que no es `n - 1` o una union con un grupo que aun no existe son

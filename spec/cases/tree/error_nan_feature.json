@@ -1,0 +1,19 @@
+{
+  "spec_version": 1,
+  "id": "tree/error_nan_feature",
+  "description": "un NaN en una variable es INVALID_ARGUMENT",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, "NaN"]
+    }
+  ],
+  "labels": {
+    "dtype": "int64",
+    "values": [0, 1]
+  },
+  "op": "tree_fit_predict",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

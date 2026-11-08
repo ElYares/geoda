@@ -1,0 +1,28 @@
+{
+  "spec_version": 1,
+  "id": "tree/max_depth_zero_is_a_single_leaf",
+  "description": "con max_depth 0 el arbol es una hoja con la clase mayoritaria (empate: la menor)",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0, 3.0, 10.0]
+    }
+  ],
+  "labels": {
+    "dtype": "int64",
+    "values": [0, 0, 0, 1]
+  },
+  "args": {
+    "max_depth": 0
+  },
+  "op": "tree_fit_predict",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int64",
+        "values": [0, 0, 0, 0]
+      }
+    ],
+    "nodes": 1
+  }
+}

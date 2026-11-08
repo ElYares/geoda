@@ -1,0 +1,25 @@
+{
+  "spec_version": 1,
+  "id": "tree/separable_by_one_threshold",
+  "description": "dos clases separables por un umbral: una raiz y dos hojas (3 nodos) que predicen sin error",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0, 3.0, 10.0, 11.0, 12.0]
+    }
+  ],
+  "labels": {
+    "dtype": "int64",
+    "values": [0, 0, 0, 1, 1, 1]
+  },
+  "op": "tree_fit_predict",
+  "expect": {
+    "columns": [
+      {
+        "dtype": "int64",
+        "values": [0, 0, 0, 1, 1, 1]
+      }
+    ],
+    "nodes": 3
+  }
+}

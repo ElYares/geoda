@@ -1,0 +1,19 @@
+{
+  "spec_version": 1,
+  "id": "tree/error_labels_length",
+  "description": "etiquetas de otro largo son LENGTH_MISMATCH",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0]
+    }
+  ],
+  "labels": {
+    "dtype": "int64",
+    "values": [0]
+  },
+  "op": "tree_fit_predict",
+  "expect": {
+    "error": "LENGTH_MISMATCH"
+  }
+}
