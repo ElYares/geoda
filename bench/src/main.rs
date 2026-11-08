@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use geoda_algo::{
     Dataset, Graph, Huffman, KMeansParams, WeightedGraph, bfs, dedupe_similar, dfs, dijkstra,
-    edit_distance, kmeans, lis, median_of_medians, merge_sort, quickselect,
+    edit_distance, kmeans, lis, median_of_medians, merge_sort, quickselect, single_linkage,
 };
 use geoda_core::file::{ColumnFileReader, ColumnFileWriter};
 use geoda_core::{Column, DataType, PrimitiveBuilder};
@@ -451,6 +451,22 @@ fn bench_mining() {
         result.iterations,
         ms(started.elapsed())
     );
+
+    // Jerarquico: 2000 y 5000 filas (el tope), n(n-1)/2 aristas por el MST.
+    for rows in [2000, 5000] {
+        let columns = blobs(&mut rng, rows, 4, 8);
+        let refs: Vec<&Column> = columns.iter().collect();
+        let data = Dataset::from_columns(&refs).expect("matriz");
+        let started = Instant::now();
+        let dendrogram = single_linkage(black_box(&data)).expect("dendrograma");
+        let built = started.elapsed();
+        let labels = dendrogram.cut(8).expect("corte");
+        println!(
+            "jerarquico single-linkage de {rows} filas x 4 variables: dendrograma en {} ms, corte en 8 grupos ({} etiquetas)",
+            ms(built),
+            labels.len()
+        );
+    }
 }
 
 fn ms(d: Duration) -> String {
