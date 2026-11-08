@@ -1,0 +1,23 @@
+{
+  "spec_version": 1,
+  "id": "linalg/error_lu_solve_singular",
+  "description": "una matriz singular es INVALID_ARGUMENT",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [2.0, 4.0]
+    }
+  ],
+  "input": {
+    "dtype": "float64",
+    "values": [1.0, 2.0]
+  },
+  "op": "lu_solve",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

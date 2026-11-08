@@ -762,6 +762,61 @@ int32_t geoda_apriori_rules(const struct GeodaColumn *transaction,
                             struct GeodaColumn **out_confidence,
                             struct GeodaColumn **out_lift);
 
+// Producto de matrices `A * B`. Cada matriz de entrada es una lista de columnas (`n_a` y `n_b`
+// handles de `Int32`, `Int64` o `Float64`, sin nulos ni valores no finitos): el handle `j` es la
+// columna `j` de la matriz. Devuelve una columna `Float64` nueva por `*out` con las
+// `filas(A) * n_b` entradas del producto **por filas**.
+//
+// `*out` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y `*out` queda en
+// NULL: `GEODA_ERR_INVALID_ARGUMENT` si una lista es NULL o vacia, hay nulos o no finitos;
+// `GEODA_ERR_LENGTH_MISMATCH` si las columnas de una matriz miden distinto o `n_a` no es igual a las
+// filas de `B`.
+//
+// # Safety
+// `a` debe apuntar a `n_a` handles validos, `b` a `n_b` handles validos y `out` ser escribible y no
+// NULL.
+int32_t geoda_matmul(const struct GeodaColumn *const *a,
+                     size_t n_a,
+                     const struct GeodaColumn *const *b,
+                     size_t n_b,
+                     struct GeodaColumn **out);
+
+// Resuelve `A x = b` por LU con pivoteo parcial. `a` es una matriz cuadrada de `n_a` columnas y `b`
+// una columna (`Int32`, `Int64` o `Float64`, sin nulos) con tantas filas como `A`. Devuelve una
+// columna `Float64` nueva por `*out` con `x`.
+//
+// `*out` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y `*out` queda en
+// NULL: `GEODA_ERR_INVALID_ARGUMENT` si `A` es singular o hay nulos o no finitos;
+// `GEODA_ERR_LENGTH_MISMATCH` si `A` no es cuadrada o `b` mide distinto.
+//
+// # Safety
+// `a` debe apuntar a `n_a` handles validos, `b` ser un handle valido y `out` escribible y no NULL.
+int32_t geoda_lu_solve(const struct GeodaColumn *const *a,
+                       size_t n_a,
+                       const struct GeodaColumn *b,
+                       struct GeodaColumn **out);
+
+// Determinante de una matriz cuadrada de `n_a` columnas, por LU con pivoteo parcial. Una matriz
+// singular tiene determinante `0` (no es un error). Escribe el resultado en `*out`.
+//
+// Si falla, devuelve un codigo negativo y `*out` no se escribe: `GEODA_ERR_INVALID_ARGUMENT` si la
+// lista es NULL o vacia, hay nulos o no finitos; `GEODA_ERR_LENGTH_MISMATCH` si no es cuadrada.
+//
+// # Safety
+// `a` debe apuntar a `n_a` handles validos y `out` ser escribible y no NULL.
+int32_t geoda_det(const struct GeodaColumn *const *a, size_t n_a, double *out);
+
+// Inversa de una matriz cuadrada de `n_a` columnas. Devuelve una columna `Float64` nueva por
+// `*out` con las `n_a * n_a` entradas **por filas**.
+//
+// `*out` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y `*out` queda en
+// NULL: `GEODA_ERR_INVALID_ARGUMENT` si es singular o hay nulos o no finitos;
+// `GEODA_ERR_LENGTH_MISMATCH` si no es cuadrada.
+//
+// # Safety
+// `a` debe apuntar a `n_a` handles validos y `out` ser escribible y no NULL.
+int32_t geoda_inverse(const struct GeodaColumn *const *a, size_t n_a, struct GeodaColumn **out);
+
 // Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 // ya no es valido; liberarlo dos veces es comportamiento indefinido.
 //

@@ -1,0 +1,23 @@
+{
+  "spec_version": 1,
+  "id": "linalg/det_identity",
+  "description": "el determinante de la identidad es 1 exacto",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 0.0, 0.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [0.0, 1.0, 0.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [0.0, 0.0, 1.0]
+    }
+  ],
+  "op": "det",
+  "expect": {
+    "value": 1.0
+  }
+}

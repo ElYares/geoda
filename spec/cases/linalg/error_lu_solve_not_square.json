@@ -1,0 +1,23 @@
+{
+  "spec_version": 1,
+  "id": "linalg/error_lu_solve_not_square",
+  "description": "una matriz de 3x2 no es cuadrada: LENGTH_MISMATCH",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0, 3.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [4.0, 5.0, 6.0]
+    }
+  ],
+  "input": {
+    "dtype": "float64",
+    "values": [1.0, 2.0, 3.0]
+  },
+  "op": "lu_solve",
+  "expect": {
+    "error": "LENGTH_MISMATCH"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "spec_version": 1,
+  "id": "linalg/error_matmul_shapes",
+  "description": "A (2x3) por A (2x3) no encaja: LENGTH_MISMATCH",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 4.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [2.0, 5.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [3.0, 6.0]
+    }
+  ],
+  "inputs2": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 4.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [2.0, 5.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [3.0, 6.0]
+    }
+  ],
+  "op": "matmul",
+  "expect": {
+    "error": "LENGTH_MISMATCH"
+  }
+}

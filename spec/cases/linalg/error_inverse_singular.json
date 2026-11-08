@@ -1,0 +1,19 @@
+{
+  "spec_version": 1,
+  "id": "linalg/error_inverse_singular",
+  "description": "una matriz singular no tiene inversa: INVALID_ARGUMENT",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [1.0, 2.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [2.0, 4.0]
+    }
+  ],
+  "op": "inverse",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

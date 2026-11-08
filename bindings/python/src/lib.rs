@@ -3,7 +3,7 @@
 //! y `group_aggregate` (la base de `geoda.group_by`), la clase `Graph` (fase 4) y el texto de la fase 5 (`edit_distance`, `dedupe`, `lis`,
 //! `huffman_encode` y `huffman_decode`), el clustering de la fase 6 (`kmeans`,
 //! `hierarchical` y `cut_tree`) el arbol de decision (`DecisionTree`) y las reglas de asociacion (`frequent_itemsets` y
-//! `association_rules`).
+//! `association_rules`) y el algebra lineal de la fase 7 (`matmul`, `solve`, `det` e `inv`).
 //!
 //! Todas las funciones numericas aceptan una lista o cualquier objeto con el protocolo Arrow
 //! `PyCapsule` (`__arrow_c_array__`): `pyarrow`, `polars`, `pandas` con Arrow... (S10). Los
@@ -26,7 +26,10 @@ use geoda_algo::{
     huffman_from_counts, kmeans_columns, lis_column, median_column, percentile_column,
     single_linkage_columns,
 };
-use geoda_algo::{association_rules as rules_of, frequent_itemsets as itemsets_of};
+use geoda_algo::{
+    Matrix, association_rules as rules_of, det as det_of, frequent_itemsets as itemsets_of,
+    inverse as inverse_of, solve as solve_of,
+};
 use geoda_core::interop::arrow_c::{ArrowArray, ArrowSchema, import_column};
 use geoda_core::{Column, DataType, Error, PrimitiveBuilder, Utf8Builder};
 use geoda_stats::{
@@ -711,6 +714,64 @@ fn association_rules(
     Ok(out)
 }
 
+/// Matriz matematica de entrada: una lista de **filas** (como `NumPy`, decision 014 N9). Sin `None`,
+/// `NaN` ni infinitos.
+fn matrix_of_rows(rows: &[Vec<f64>]) -> PyResult<Matrix> {
+    Matrix::from_rows(rows).map_err(|e| value_error(&e))
+}
+
+/// Producto de matrices `a @ b`. Las dos son listas de filas; devuelve la lista de filas del
+/// producto.
+///
+/// # Errors
+/// `ValueError` si las filas miden distinto, hay `NaN` o infinitos, o las formas no encajan.
+#[pyfunction]
+// PyO3 extrae las listas de Python por valor; no hay forma de recibirlas por referencia.
+#[allow(clippy::needless_pass_by_value)]
+fn matmul(a: Vec<Vec<f64>>, b: Vec<Vec<f64>>) -> PyResult<Vec<Vec<f64>>> {
+    let product = matrix_of_rows(&a)?
+        .matmul(&matrix_of_rows(&b)?)
+        .map_err(|e| value_error(&e))?;
+    Ok(product.to_rows())
+}
+
+/// Resuelve `a x = b` por LU con pivoteo parcial. `a` es una lista de filas (cuadrada) y `b` una
+/// lista de numeros; devuelve `x`.
+///
+/// # Errors
+/// `ValueError` si `a` es singular o no es cuadrada, `b` mide distinto o hay valores no finitos.
+#[pyfunction]
+// PyO3 extrae las listas de Python por valor; no hay forma de recibirlas por referencia.
+#[allow(clippy::needless_pass_by_value)]
+fn solve(a: Vec<Vec<f64>>, b: Vec<f64>) -> PyResult<Vec<f64>> {
+    solve_of(&matrix_of_rows(&a)?, &b).map_err(|e| value_error(&e))
+}
+
+/// Determinante de una matriz cuadrada (lista de filas), por LU con pivoteo parcial. Una matriz
+/// singular tiene determinante `0.0` (no es un error).
+///
+/// # Errors
+/// `ValueError` si no es cuadrada o hay valores no finitos.
+#[pyfunction]
+// PyO3 extrae las listas de Python por valor; no hay forma de recibirlas por referencia.
+#[allow(clippy::needless_pass_by_value)]
+fn det(a: Vec<Vec<f64>>) -> PyResult<f64> {
+    det_of(&matrix_of_rows(&a)?).map_err(|e| value_error(&e))
+}
+
+/// Inversa de una matriz cuadrada (lista de filas); devuelve la lista de filas de la inversa.
+///
+/// # Errors
+/// `ValueError` si es singular, no es cuadrada o hay valores no finitos.
+#[pyfunction]
+// PyO3 extrae las listas de Python por valor; no hay forma de recibirlas por referencia.
+#[allow(clippy::needless_pass_by_value)]
+fn inv(a: Vec<Vec<f64>>) -> PyResult<Vec<Vec<f64>>> {
+    Ok(inverse_of(&matrix_of_rows(&a)?)
+        .map_err(|e| value_error(&e))?
+        .to_rows())
+}
+
 /// Subsecuencia estrictamente creciente mas larga (LIS) de una lista de numeros o una columna
 /// Arrow numerica. Devuelve `{"length": int, "indices": [int]}` con las posiciones de sus
 /// elementos, de menor a mayor.
@@ -917,6 +978,10 @@ fn _geoda(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hierarchical, m)?)?;
     m.add_function(wrap_pyfunction!(cut_tree, m)?)?;
     m.add_class::<DecisionTree>()?;
+    m.add_function(wrap_pyfunction!(matmul, m)?)?;
+    m.add_function(wrap_pyfunction!(solve, m)?)?;
+    m.add_function(wrap_pyfunction!(det, m)?)?;
+    m.add_function(wrap_pyfunction!(inv, m)?)?;
     m.add_function(wrap_pyfunction!(frequent_itemsets, m)?)?;
     m.add_function(wrap_pyfunction!(association_rules, m)?)?;
     m.add_function(wrap_pyfunction!(huffman_encode, m)?)?;

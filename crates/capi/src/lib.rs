@@ -14,10 +14,10 @@ use std::ffi::c_char;
 use std::ptr;
 
 use geoda_algo::{
-    DecisionTree, KMeansParams, Method, Network, Transactions, TreeParams, association_rules,
-    cut_merges, dedupe_column, edit_distance_columns, fit_tree_columns, frequent_itemsets,
-    huffman_decode_column, huffman_encode_column, kmeans_columns, lis_column, percentile_column,
-    single_linkage_columns,
+    DecisionTree, KMeansParams, Matrix, Method, Network, Transactions, TreeParams,
+    association_rules, cut_merges, dedupe_column, det, edit_distance_columns, fit_tree_columns,
+    frequent_itemsets, huffman_decode_column, huffman_encode_column, inverse, kmeans_columns,
+    lis_column, percentile_column, single_linkage_columns, solve,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -1713,6 +1713,136 @@ pub unsafe extern "C" fn geoda_apriori_rules(
             *out_confidence = into_handle(confidence);
             *out_lift = into_handle(lift);
         }
+        Ok(())
+    })
+}
+
+/// Matriz matematica de entrada: `n_columns` handles son las columnas de la matriz (decision 014, N2).
+///
+/// # Safety
+/// Los de `column_list`.
+unsafe fn matrix_of(
+    columns: *const *const GeodaColumn,
+    n_columns: usize,
+) -> Result<Matrix, CError> {
+    // SAFETY: contrato de `column_list`.
+    let columns = unsafe { column_list(columns, n_columns) }?;
+    Ok(Matrix::from_columns(&columns)?)
+}
+
+/// Una matriz de salida como columna `Float64` plana, por filas (decision 014, N2): quien llama
+/// conoce las dimensiones.
+fn matrix_column(matrix: &Matrix) -> Result<Column, Error> {
+    float64_column(matrix.data())
+}
+
+/// Producto de matrices `A * B`. Cada matriz de entrada es una lista de columnas (`n_a` y `n_b`
+/// handles de `Int32`, `Int64` o `Float64`, sin nulos ni valores no finitos): el handle `j` es la
+/// columna `j` de la matriz. Devuelve una columna `Float64` nueva por `*out` con las
+/// `filas(A) * n_b` entradas del producto **por filas**.
+///
+/// `*out` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y `*out` queda en
+/// NULL: `GEODA_ERR_INVALID_ARGUMENT` si una lista es NULL o vacia, hay nulos o no finitos;
+/// `GEODA_ERR_LENGTH_MISMATCH` si las columnas de una matriz miden distinto o `n_a` no es igual a las
+/// filas de `B`.
+///
+/// # Safety
+/// `a` debe apuntar a `n_a` handles validos, `b` a `n_b` handles validos y `out` ser escribible y no
+/// NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_matmul(
+    a: *const *const GeodaColumn,
+    n_a: usize,
+    b: *const *const GeodaColumn,
+    n_b: usize,
+    out: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out]) }?;
+        // SAFETY: contrato de `matrix_of`.
+        let (a, b) = unsafe { (matrix_of(a, n_a)?, matrix_of(b, n_b)?) };
+        let product = matrix_column(&a.matmul(&b)?)?;
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { *out = into_handle(product) };
+        Ok(())
+    })
+}
+
+/// Resuelve `A x = b` por LU con pivoteo parcial. `a` es una matriz cuadrada de `n_a` columnas y `b`
+/// una columna (`Int32`, `Int64` o `Float64`, sin nulos) con tantas filas como `A`. Devuelve una
+/// columna `Float64` nueva por `*out` con `x`.
+///
+/// `*out` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y `*out` queda en
+/// NULL: `GEODA_ERR_INVALID_ARGUMENT` si `A` es singular o hay nulos o no finitos;
+/// `GEODA_ERR_LENGTH_MISMATCH` si `A` no es cuadrada o `b` mide distinto.
+///
+/// # Safety
+/// `a` debe apuntar a `n_a` handles validos, `b` ser un handle valido y `out` escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_lu_solve(
+    a: *const *const GeodaColumn,
+    n_a: usize,
+    b: *const GeodaColumn,
+    out: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out]) }?;
+        // SAFETY: contratos de `matrix_of` y `column_ref`.
+        let (a, b) = unsafe { (matrix_of(a, n_a)?, column_ref(b, "b")?) };
+        let b = Matrix::from_columns(&[b])?.column(0);
+        let x = float64_column(&solve(&a, &b)?)?;
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { *out = into_handle(x) };
+        Ok(())
+    })
+}
+
+/// Determinante de una matriz cuadrada de `n_a` columnas, por LU con pivoteo parcial. Una matriz
+/// singular tiene determinante `0` (no es un error). Escribe el resultado en `*out`.
+///
+/// Si falla, devuelve un codigo negativo y `*out` no se escribe: `GEODA_ERR_INVALID_ARGUMENT` si la
+/// lista es NULL o vacia, hay nulos o no finitos; `GEODA_ERR_LENGTH_MISMATCH` si no es cuadrada.
+///
+/// # Safety
+/// `a` debe apuntar a `n_a` handles validos y `out` ser escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_det(a: *const *const GeodaColumn, n_a: usize, out: *mut f64) -> i32 {
+    guard(|| {
+        if out.is_null() {
+            return Err(invalid_argument("out es NULL"));
+        }
+        // SAFETY: contrato de `matrix_of`.
+        let value = det(&unsafe { matrix_of(a, n_a) }?)?;
+        // SAFETY: `out` no es NULL (arriba) y el llamador lo garantiza escribible.
+        unsafe { *out = value };
+        Ok(())
+    })
+}
+
+/// Inversa de una matriz cuadrada de `n_a` columnas. Devuelve una columna `Float64` nueva por
+/// `*out` con las `n_a * n_a` entradas **por filas**.
+///
+/// `*out` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo y `*out` queda en
+/// NULL: `GEODA_ERR_INVALID_ARGUMENT` si es singular o hay nulos o no finitos;
+/// `GEODA_ERR_LENGTH_MISMATCH` si no es cuadrada.
+///
+/// # Safety
+/// `a` debe apuntar a `n_a` handles validos y `out` ser escribible y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_inverse(
+    a: *const *const GeodaColumn,
+    n_a: usize,
+    out: *mut *mut GeodaColumn,
+) -> i32 {
+    guard(|| {
+        // SAFETY: `out` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out]) }?;
+        // SAFETY: contrato de `matrix_of`.
+        let inverted = matrix_column(&inverse(&unsafe { matrix_of(a, n_a) }?)?)?;
+        // SAFETY: `out` es escribible (arriba).
+        unsafe { *out = into_handle(inverted) };
         Ok(())
     })
 }

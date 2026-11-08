@@ -23,11 +23,11 @@ use geoda::{
     geoda_column_max_i64, geoda_column_mean, geoda_column_median, geoda_column_min_f64,
     geoda_column_min_i64, geoda_column_null_count, geoda_column_percentile, geoda_column_slice,
     geoda_column_std, geoda_column_sum_f64, geoda_column_sum_i64, geoda_column_to_arrow,
-    geoda_column_var, geoda_dendrogram_cut, geoda_graph_bfs, geoda_graph_components,
+    geoda_column_var, geoda_dendrogram_cut, geoda_det, geoda_graph_bfs, geoda_graph_components,
     geoda_graph_dijkstra, geoda_graph_free, geoda_graph_mst, geoda_graph_new,
     geoda_graph_topological_order, geoda_hierarchical, geoda_huffman_decode, geoda_huffman_encode,
-    geoda_kmeans, geoda_last_error_message, geoda_tree_fit, geoda_tree_free, geoda_tree_node_count,
-    geoda_tree_predict,
+    geoda_inverse, geoda_kmeans, geoda_last_error_message, geoda_lu_solve, geoda_matmul,
+    geoda_tree_fit, geoda_tree_free, geoda_tree_node_count, geoda_tree_predict,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -111,6 +111,30 @@ fn parse_f64(v: &Value) -> Result<f64, String> {
 /// Mismos flotantes si tienen los mismos bits, o si ambos son NaN.
 fn same_f64(a: f64, b: f64) -> bool {
     (a.is_nan() && b.is_nan()) || a.to_bits() == b.to_bits()
+}
+
+/// `expect.tolerance`: error absoluto maximo para los `float64` de un caso. Sin ella, la
+/// comparacion sigue siendo exacta (bit a bit).
+fn tolerance_of(expect: &Value) -> Result<Option<f64>, String> {
+    match expect.get("tolerance") {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => {
+            let tolerance = value
+                .as_f64()
+                .filter(|t| t.is_finite() && *t >= 0.0)
+                .ok_or("expect.tolerance debe ser un numero finito >= 0")?;
+            Ok(Some(tolerance))
+        }
+    }
+}
+
+/// Igualdad de dos `float64`: exacta, o dentro de `tolerance` si se dio (un `NaN` solo iguala a un
+/// `NaN` y un infinito solo a si mismo).
+fn close_f64(a: f64, b: f64, tolerance: Option<f64>) -> bool {
+    match tolerance {
+        Some(t) if a.is_finite() && b.is_finite() => (a - b).abs() <= t,
+        _ => same_f64(a, b),
+    }
 }
 
 fn values_of(input: &Value) -> Result<&Vec<Value>, String> {
@@ -251,7 +275,12 @@ fn export_through_capi(handle: &Handle) -> Result<Column, String> {
     column
 }
 
-fn cell_matches(column: &Column, i: usize, expected: &Value) -> Result<bool, String> {
+fn cell_matches(
+    column: &Column,
+    i: usize,
+    expected: &Value,
+    tolerance: Option<f64>,
+) -> Result<bool, String> {
     let is_null = column.is_null(i).map_err(|e| e.to_string())?;
     if expected.is_null() || is_null {
         return Ok(expected.is_null() && is_null);
@@ -269,9 +298,10 @@ fn cell_matches(column: &Column, i: usize, expected: &Value) -> Result<bool, Str
         DataType::Int64 => {
             expected.as_i64() == Some(column.values::<i64>().map_err(|e| e.to_string())?[i])
         }
-        DataType::Float64 => same_f64(
+        DataType::Float64 => close_f64(
             column.values::<f64>().map_err(|e| e.to_string())?[i],
             parse_f64(expected)?,
+            tolerance,
         ),
         DataType::Utf8 => {
             expected.as_str() == Some(column.str_value(i).map_err(|e| e.to_string())?)
@@ -280,7 +310,7 @@ fn cell_matches(column: &Column, i: usize, expected: &Value) -> Result<bool, Str
 }
 
 /// Compara las claves `dtype` y `values` de `expect` con la columna exportada.
-fn check_exported(expect: &Value, handle: &Handle) -> CaseResult {
+fn check_exported(expect: &Value, handle: &Handle, tolerance: Option<f64>) -> CaseResult {
     if expect.get("dtype").is_none() && expect.get("values").is_none() {
         return Ok(());
     }
@@ -305,7 +335,7 @@ fn check_exported(expect: &Value, handle: &Handle) -> CaseResult {
             ));
         }
         for (i, expected) in values.iter().enumerate() {
-            if !cell_matches(&column, i, expected)? {
+            if !cell_matches(&column, i, expected, tolerance)? {
                 return Err(format!("values[{i}]: esperado {expected}"));
             }
         }
@@ -345,8 +375,9 @@ fn check_columns(expect: &Value, handles: &[Handle]) -> CaseResult {
             handles.len()
         ));
     }
+    let tolerance = tolerance_of(expect)?;
     for (i, (want, handle)) in expected.iter().zip(handles).enumerate() {
-        check_exported(want, handle).map_err(|e| format!("columns[{i}]: {e}"))?;
+        check_exported(want, handle, tolerance).map_err(|e| format!("columns[{i}]: {e}"))?;
     }
     Ok(())
 }
@@ -360,7 +391,7 @@ fn check_expect(expect: &Value, outcome: &Outcome) -> CaseResult {
                 );
             }
             check_counts(expect, handle)?;
-            check_exported(expect, handle)
+            check_exported(expect, handle, tolerance_of(expect)?)
         }
         Outcome::Graph(handles, extras) => {
             check_columns(expect, handles)?;
@@ -368,7 +399,8 @@ fn check_expect(expect: &Value, outcome: &Outcome) -> CaseResult {
                 let want = expect.get(*key).ok_or(format!("expect.{key} falta"))?;
                 match actual {
                     Extra::Int(actual) if want.as_i64() == Some(*actual) => {}
-                    Extra::Float(actual) if same_f64(parse_f64(want)?, *actual) => {}
+                    Extra::Float(actual)
+                        if close_f64(parse_f64(want)?, *actual, tolerance_of(expect)?) => {}
                     Extra::Int(actual) => {
                         return Err(format!("{key}: esperado {want}, salio {actual}"));
                     }
@@ -393,7 +425,7 @@ fn check_expect(expect: &Value, outcome: &Outcome) -> CaseResult {
         }
         Outcome::Value(actual) => {
             let expected = parse_f64(expect.get("value").ok_or("expect.value falta")?)?;
-            if same_f64(expected, *actual) {
+            if close_f64(expected, *actual, tolerance_of(expect)?) {
                 Ok(())
             } else {
                 Err(format!("value: esperado {expected:?}, salio {actual:?}"))
@@ -645,7 +677,59 @@ fn run_matrix_op(op: &str, case: &Value, inputs: &Value) -> Result<OpResult, Str
             collect_with_extras(code, &outs, Vec::new())
         }
         "tree_fit_predict" => run_tree(case, &pointers),
+        "matmul" | "lu_solve" | "det" | "inverse" => run_linalg(op, case, &pointers),
         otro => Err(format!("op de matriz desconocida: {otro:?}")),
+    }
+}
+
+/// Algebra lineal basica: `inputs` es la matriz `A` (lista de columnas); `matmul` lleva ademas
+/// `inputs2` (la matriz `B`) y `lu_solve` una columna `input` (el lado derecho `b`). Salen una
+/// columna plana por filas (`matmul`, `lu_solve`, `inverse`) o un escalar (`det`).
+fn run_linalg(op: &str, case: &Value, a: &[*const GeodaColumn]) -> Result<OpResult, String> {
+    let mut out: *mut GeodaColumn = ptr::null_mut();
+    match op {
+        "matmul" => {
+            let mut owned = Vec::new();
+            for spec in case
+                .get("inputs2")
+                .and_then(Value::as_array)
+                .ok_or("inputs2 falta")?
+            {
+                match import_through_capi(spec)? {
+                    Ok(handle) => owned.push(handle),
+                    Err(code) => return Ok(Err(code)),
+                }
+            }
+            let b: Vec<*const GeodaColumn> = owned.iter().map(|h| h.0.cast_const()).collect();
+            // SAFETY: handles validos, arreglos de punteros y `out` escribible.
+            let code =
+                unsafe { geoda_matmul(a.as_ptr(), a.len(), b.as_ptr(), b.len(), &raw mut out) };
+            collect_outs(code, &[out])
+        }
+        "lu_solve" => {
+            let b = match import_through_capi(case.get("input").ok_or("input falta")?)? {
+                Ok(handle) => handle,
+                Err(code) => return Ok(Err(code)),
+            };
+            // SAFETY: handles validos, arreglo de punteros y `out` escribible.
+            let code = unsafe { geoda_lu_solve(a.as_ptr(), a.len(), b.0, &raw mut out) };
+            collect_outs(code, &[out])
+        }
+        "det" => {
+            let mut value = f64::NAN;
+            // SAFETY: handles validos, arreglo de punteros y `out` escribible.
+            let code = unsafe { geoda_det(a.as_ptr(), a.len(), &raw mut value) };
+            Ok(if code == GEODA_OK {
+                Ok(Outcome::Value(value))
+            } else {
+                Err(code)
+            })
+        }
+        _ => {
+            // SAFETY: handles validos, arreglo de punteros y `out` escribible.
+            let code = unsafe { geoda_inverse(a.as_ptr(), a.len(), &raw mut out) };
+            collect_outs(code, &[out])
+        }
     }
 }
 
@@ -1110,6 +1194,25 @@ fn spec_error_passes_only_with_that_category() {
     run_case(&slice_oob("OUT_OF_BOUNDS")).unwrap();
     let err = run_case(&slice_oob("TYPE_MISMATCH")).unwrap_err();
     assert!(err.contains("OUT_OF_BOUNDS"), "{err}");
+}
+
+#[test]
+fn spec_tolerance_accepts_small_errors_and_rejects_big_ones() {
+    let case = |value: f64, tolerance: Option<f64>| {
+        let mut expect = serde_json::json!({ "value": value });
+        if let Some(t) = tolerance {
+            expect["tolerance"] = t.into();
+        }
+        let mut case = inline("median", &expect);
+        case["input"] = serde_json::json!({ "dtype": "int64", "values": [1, 2, 3, 4] });
+        case
+    };
+    // La mediana es 2.5: sin tolerancia hay que acertar el bit, con ella basta estar cerca.
+    run_case(&case(2.5, None)).unwrap();
+    assert!(run_case(&case(2.500_000_1, None)).is_err());
+    run_case(&case(2.500_000_1, Some(1e-3))).unwrap();
+    assert!(run_case(&case(2.500_000_1, Some(1e-9))).is_err());
+    assert!(run_case(&case(f64::NAN.max(0.0) + 3.0, Some(0.1))).is_err());
 }
 
 #[test]

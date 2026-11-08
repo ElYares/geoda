@@ -1,0 +1,20 @@
+{
+  "spec_version": 1,
+  "id": "linalg/error_matmul_no_columns",
+  "description": "una lista vacia de columnas es INVALID_ARGUMENT",
+  "inputs": [],
+  "inputs2": [
+    {
+      "dtype": "float64",
+      "values": [7.0, 9.0, 11.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [8.0, 10.0, 12.0]
+    }
+  ],
+  "op": "matmul",
+  "expect": {
+    "error": "INVALID_ARGUMENT"
+  }
+}

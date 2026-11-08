@@ -223,6 +223,22 @@ def _load():
             [p_handle, p_handle, ctypes.c_size_t, ctypes.c_double] + [ctypes.POINTER(p_handle)] * 5,
             ctypes.c_int32,
         ),
+        "geoda_matmul": (
+            [ctypes.POINTER(p_handle), ctypes.c_size_t] * 2 + [ctypes.POINTER(p_handle)],
+            ctypes.c_int32,
+        ),
+        "geoda_lu_solve": (
+            [ctypes.POINTER(p_handle), ctypes.c_size_t, p_handle, ctypes.POINTER(p_handle)],
+            ctypes.c_int32,
+        ),
+        "geoda_det": (
+            [ctypes.POINTER(p_handle), ctypes.c_size_t, ctypes.POINTER(ctypes.c_double)],
+            ctypes.c_int32,
+        ),
+        "geoda_inverse": (
+            [ctypes.POINTER(p_handle), ctypes.c_size_t, ctypes.POINTER(p_handle)],
+            ctypes.c_int32,
+        ),
         "geoda_dendrogram_cut": (
             [p_handle, p_handle, ctypes.c_size_t, ctypes.c_size_t, ctypes.POINTER(p_handle)],
             ctypes.c_int32,
@@ -511,6 +527,36 @@ def kmeans(columns, k, max_iter, tol, seed):
     if code != OK:
         return handles, code, None, None
     return handles, code, inertia.value, iterations.value
+
+
+def matmul(a, b):
+    """`([producto plano por filas], 0)` o `([], codigo)`; `a` y `b` son listas de columnas."""
+    outs = [ctypes.c_void_p(None)]
+    code = LIB.geoda_matmul(
+        _handle_array(a), len(a), _handle_array(b), len(b), ctypes.byref(outs[0])
+    )
+    return Column._own(outs, code)
+
+
+def lu_solve(a, b):
+    """`([x], 0)` o `([], codigo)`; `a` es una lista de columnas y `b` una columna."""
+    outs = [ctypes.c_void_p(None)]
+    code = LIB.geoda_lu_solve(_handle_array(a), len(a), b.handle, ctypes.byref(outs[0]))
+    return Column._own(outs, code)
+
+
+def det(a):
+    """`(determinante, 0)` o `(None, codigo)`."""
+    out = ctypes.c_double(float("nan"))
+    code = LIB.geoda_det(_handle_array(a), len(a), ctypes.byref(out))
+    return (out.value, code) if code == OK else (None, code)
+
+
+def inverse(a):
+    """`([inversa plana por filas], 0)` o `([], codigo)`."""
+    outs = [ctypes.c_void_p(None)]
+    code = LIB.geoda_inverse(_handle_array(a), len(a), ctypes.byref(outs[0]))
+    return Column._own(outs, code)
 
 
 def hierarchical(columns):

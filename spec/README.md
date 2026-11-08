@@ -89,6 +89,10 @@ no conozca **hace fallar el caso**, no lo salta.
 | `tree_fit_predict` | `max_depth`, `min_samples_leaf` | entrena un arbol con `inputs` y `labels` y predice `predict_inputs` (`geoda_tree_fit` y `geoda_tree_predict`) | `expect.columns` y `expect.nodes` |
 | `apriori_itemsets` | `min_support` | conjuntos frecuentes de las transacciones `input` (transaccion) e `input2` (item) (`geoda_apriori_itemsets`) | `expect.columns` |
 | `apriori_rules` | `min_support`, `min_confidence` | reglas de asociacion de esas transacciones (`geoda_apriori_rules`) | `expect.columns` |
+| `matmul` | — | producto `inputs * inputs2` (`geoda_matmul`) | `expect.columns` |
+| `lu_solve` | — | `inputs x = input` por LU (`geoda_lu_solve`) | `expect.columns` |
+| `det` | — | determinante de `inputs` (`geoda_det`) | `expect.value` |
+| `inverse` | — | inversa de `inputs` (`geoda_inverse`) | `expect.columns` |
 | `graph_bfs` | `source` | recorrido en anchura (`geoda_graph_bfs`) | `expect.columns` |
 | `graph_components` | — | componentes conexas (`geoda_graph_components`) | `expect.columns` y `expect.count` |
 | `graph_topological_order` | — | orden topologico (`geoda_graph_topological_order`) | `expect.columns` |
@@ -173,7 +177,7 @@ la consulta. Las columnas de resultado, en este orden:
   (`float64`, en ese orden) y `expect.components` cuantas componentes tiene el grafo. Sin pesos es
   `TYPE_MISMATCH`; dirigido, `INVALID_ARGUMENT`.
 
-`expect.count`, `total`, `components`, `nodes`, `inertia` e `iterations` se comparan exactos (el flotante bit a bit).
+`expect.count`, `total`, `components`, `nodes`, `inertia` e `iterations` se comparan exactos (el flotante bit a bit) salvo que el caso lleve `expect.tolerance`.
 
 #### Texto y similitud (fase 5)
 
@@ -235,6 +239,27 @@ Una matriz de datos es una **lista de columnas** (una por variable): un caso de 
   filas); sale `labels` (`int64`, `0..k`, numerados por la primera fila de cada grupo). `k` fuera de
   `1..=n`, un largo que no es `n - 1` o una union con un grupo que aun no existe son
   `INVALID_ARGUMENT`; un negativo, `OUT_OF_BOUNDS`; otro tipo, `TYPE_MISMATCH`.
+
+#### Algebra lineal (fase 7)
+
+Una **matriz matematica** de entrada es, como una tabla de datos, una lista de columnas (`inputs`: la
+columna `j` de la lista es la columna `j` de la matriz); `matmul` lleva ademas `inputs2` (la matriz
+`B`) y `lu_solve` una columna `input` (el lado derecho `b`). Sin nulos ni valores no finitos
+(`INVALID_ARGUMENT`); una lista vacia, `INVALID_ARGUMENT`. Una matriz de **salida** sale como **una**
+columna `float64` plana **por filas** (decision 014, N2), de la que quien llama conoce las dimensiones:
+
+- `matmul`: `filas(A) * columnas(B)` valores. `A` y `B` que no encajan, `LENGTH_MISMATCH`.
+- `lu_solve`: `x`. `A` singular, `INVALID_ARGUMENT`; `A` no cuadrada o `b` de otro largo,
+  `LENGTH_MISMATCH`.
+- `det`: un escalar (`expect.value`). Una matriz singular tiene determinante `0` y **no** es un error;
+  una no cuadrada, `LENGTH_MISMATCH`.
+- `inverse`: `n * n` valores. Singular, `INVALID_ARGUMENT`.
+
+**Tolerancia.** `expect.tolerance` (opcional, un numero finito `>= 0`) es el error absoluto maximo
+con el que se comparan los valores `float64` de `expect.columns`, `expect.value` y los escalares con
+nombre del caso. Sin ella la comparacion sigue siendo exacta (bit a bit); un `NaN` solo iguala a un
+`NaN` y un infinito solo a si mismo, tambien con tolerancia. Los casos de resultado exacto (enteros
+pequenos) no la llevan.
 
 ### `expect`
 

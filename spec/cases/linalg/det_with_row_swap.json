@@ -1,0 +1,20 @@
+{
+  "spec_version": 1,
+  "id": "linalg/det_with_row_swap",
+  "description": "det [[4,3],[6,3]] = -6: lleva el signo de la permutacion",
+  "inputs": [
+    {
+      "dtype": "float64",
+      "values": [4.0, 6.0]
+    },
+    {
+      "dtype": "float64",
+      "values": [3.0, 3.0]
+    }
+  ],
+  "op": "det",
+  "expect": {
+    "value": -6.0,
+    "tolerance": 1e-12
+  }
+}

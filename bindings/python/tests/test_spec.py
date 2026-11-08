@@ -16,7 +16,7 @@ SCALAR_OPS = ("count", "sum", "min", "max", "mean", "var", "std", "corr")
 COLUMNS_OPS = ("histogram", "group_by")
 GRAPH_OPS = ("graph_bfs", "graph_components", "graph_topological_order", "graph_dijkstra", "graph_mst")
 TEXT_OPS = ("edit_distance", "lis", "huffman_encode", "huffman_decode", "dedupe", "dendrogram_cut", "apriori_itemsets", "apriori_rules")
-MATRIX_OPS = ("kmeans", "hierarchical", "tree_fit_predict")
+MATRIX_OPS = ("kmeans", "hierarchical", "tree_fit_predict", "matmul", "lu_solve", "det", "inverse")
 OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile") + SCALAR_OPS + COLUMNS_OPS + TEXT_OPS + MATRIX_OPS
 
 
@@ -86,7 +86,7 @@ def run_case(case):
             _check_value(expect, value)
         else:
             _check_counts(expect, result)
-            _check_exported(expect, result)
+            _check_exported(expect, result, _tolerance(expect))
     finally:
         for handle in (result, column, *outputs):
             if handle is not None:
@@ -143,7 +143,7 @@ def run_graph_case(case, op, expect):
             if key not in expect:
                 raise CaseFailure(f"expect.{key} falta")
             if isinstance(actual, float):
-                if not capi.same_float(capi.parse_float(expect[key]), actual):
+                if not _close(capi.parse_float(expect[key]), actual, _tolerance(expect)):
                     raise CaseFailure(f"{key}: esperado {expect[key]!r}, salio {actual!r}")
             elif expect[key] != actual:
                 raise CaseFailure(f"{key}: esperado {expect[key]!r}, salio {actual!r}")
@@ -181,6 +181,9 @@ def run_matrix_case(case, op, expect):
                     args["seed"],
                 )
                 extras = {"inertia": inertia, "iterations": iterations}
+            elif op in ("matmul", "lu_solve", "det", "inverse"):
+                outputs, code, extras = _run_linalg(op, case, owned, owned_extra := [])
+                owned.extend(owned_extra)
             elif op == "tree_fit_predict":
                 outputs, code, extras = _run_tree(case, owned, owned_extra := [])
                 owned.extend(owned_extra)
@@ -191,18 +194,51 @@ def run_matrix_case(case, op, expect):
             return
         if "error" in expect:
             raise CaseFailure(f"esperaba el error {expect['error']!r}, pero la operacion tuvo exito")
+        if op == "det":
+            _check_value(expect, extras["value"])
+            return
         _check_columns(expect, outputs)
         for key, actual in extras.items():
             if key not in expect:
                 continue
             if isinstance(actual, float):
-                if not capi.same_float(capi.parse_float(expect[key]), actual):
+                if not _close(capi.parse_float(expect[key]), actual, _tolerance(expect)):
                     raise CaseFailure(f"{key}: esperado {expect[key]!r}, salio {actual!r}")
             elif expect[key] != actual:
                 raise CaseFailure(f"{key}: esperado {expect[key]!r}, salio {actual!r}")
     finally:
         for handle in (*outputs, *owned):
             handle.close()
+
+
+def _run_linalg(op, case, a, owned_extra):
+    """Algebra lineal basica sobre `a` (la matriz `A` como lista de columnas): `matmul` lee `inputs2`
+    (la matriz `B`) y `lu_solve` la columna `input` (el lado derecho). Devuelve
+    `([columna plana], codigo, extras)`; `det` devuelve `([], codigo, {"value": determinante})`."""
+    if op == "det":
+        value, code = capi.det(a)
+        return [], code, {"value": value}
+    if op == "inverse":
+        outputs, code = capi.inverse(a)
+        return outputs, code, {}
+    if op == "lu_solve":
+        b, code = _import(case["input"])
+        if b is not None:
+            owned_extra.append(b)
+        if code != capi.OK:
+            return [], code, {}
+        outputs, code = capi.lu_solve(a, b)
+        return outputs, code, {}
+    other = []
+    for spec in case["inputs2"]:
+        column, code = _import(spec)
+        if column is not None:
+            owned_extra.append(column)
+        if code != capi.OK:
+            return [], code, {}
+        other.append(column)
+    outputs, code = capi.matmul(a, other)
+    return outputs, code, {}
 
 
 def _run_tree(case, train, owned_extra):
@@ -348,7 +384,7 @@ def _check_columns(expect, outputs):
         )
     for i, (want, handle) in enumerate(zip(wanted, outputs)):
         try:
-            _check_exported(want, handle)
+            _check_exported(want, handle, _tolerance(expect))
         except CaseFailure as e:
             raise CaseFailure(f"columns[{i}]: {e}") from None
 
@@ -383,7 +419,7 @@ def _check_value(expect, actual):
     if "value" not in expect:
         raise CaseFailure("expect.value falta")
     want = capi.parse_float(expect["value"])
-    if not capi.same_float(want, actual):
+    if not _close(want, actual, _tolerance(expect)):
         raise CaseFailure(f"value: esperado {want!r}, salio {actual!r}")
 
 
@@ -394,7 +430,7 @@ def _check_counts(expect, handle):
             raise CaseFailure(f"{key}: esperado {expect[key]!r}, salio {value!r}")
 
 
-def _check_exported(expect, handle):
+def _check_exported(expect, handle, tolerance=None):
     if "dtype" not in expect and "values" not in expect:
         return
     schema, array, code = handle.export()
@@ -407,17 +443,37 @@ def _check_exported(expect, handle):
     if "dtype" in expect and expect["dtype"] != dtype:
         raise CaseFailure(f"dtype: esperado {expect['dtype']!r}, salio {dtype!r}")
     if "values" in expect:
-        _check_values(expect["values"], values, dtype)
+        _check_values(expect["values"], values, dtype, tolerance)
 
 
-def _check_values(expected, actual, dtype):
+def _tolerance(expect):
+    """`expect.tolerance`: error absoluto maximo de los `float64`; sin ella, comparacion exacta."""
+    tolerance = expect.get("tolerance")
+    if tolerance is None:
+        return None
+    if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) or not tolerance >= 0 \
+            or tolerance == float("inf"):
+        raise CaseFailure("expect.tolerance debe ser un numero finito >= 0")
+    return float(tolerance)
+
+
+def _close(want, got, tolerance):
+    """Igualdad exacta (bit a bit) o, con tolerancia, a distancia absoluta menor o igual que ella.
+    Un NaN solo iguala a un NaN y un infinito solo a si mismo."""
+    finite = want - want == 0 and got - got == 0  # False para NaN e infinitos
+    if tolerance is not None and finite:
+        return abs(want - got) <= tolerance
+    return capi.same_float(want, got)
+
+
+def _check_values(expected, actual, dtype, tolerance=None):
     if len(expected) != len(actual):
         raise CaseFailure(f"values: esperados {len(expected)}, salieron {len(actual)}")
     for i, (want, got) in enumerate(zip(expected, actual)):
         if want is None or got is None:
             ok = want is None and got is None
         elif dtype == "float64":
-            ok = capi.same_float(capi.parse_float(want), got)
+            ok = _close(capi.parse_float(want), got, tolerance)
         else:
             ok = want == got
         if not ok:
@@ -491,6 +547,24 @@ class RunnerBehaviour(unittest.TestCase):
         for wrong in (2.0, "NaN"):
             with self.assertRaises(CaseFailure):
                 run_case(case(wrong))
+
+    def test_tolerance_accepts_small_errors_and_rejects_big_ones(self):
+        def case(value, tolerance=None):
+            expect = {"value": value}
+            if tolerance is not None:
+                expect["tolerance"] = tolerance
+            return inline("median", expect, input={"dtype": "int64", "values": [1, 2, 3, 4]})
+
+        run_case(case(2.5))
+        with self.assertRaises(CaseFailure):
+            run_case(case(2.5000001))
+        run_case(case(2.5000001, 1e-3))
+        with self.assertRaises(CaseFailure):
+            run_case(case(2.5000001, 1e-9))
+        with self.assertRaises(CaseFailure):
+            run_case(case(3.0, 0.1))
+        with self.assertRaises(CaseFailure):
+            run_case(case(2.5, -1.0))
 
     def test_percentile_without_p_fails(self):
         with self.assertRaisesRegex(CaseFailure, "args.p"):

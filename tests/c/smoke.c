@@ -279,6 +279,47 @@ static void prueba_apriori(void) {
     geoda_column_free(item);
 }
 
+/* Algebra lineal: producto, solve, det e inversa; los errores dejan los `out` en NULL. */
+static void prueba_algebra(void) {
+    /* A = [[2,1],[1,3]] como columnas (2,1) y (1,3); b = (3,5); x = (0.8, 1.4). */
+    const double c0[] = {2.0, 1.0}, c1[] = {1.0, 3.0}, rhs[] = {3.0, 5.0};
+    struct GeodaColumn *col0 = columna_plana("g", c0, 2), *col1 = columna_plana("g", c1, 2);
+    struct GeodaColumn *b = columna_plana("g", rhs, 2);
+    const struct GeodaColumn *a[] = {col0, col1};
+    struct GeodaColumn *out = (struct GeodaColumn *)1;
+    CHECK(geoda_lu_solve(a, 2, b, &out) == GEODA_OK && geoda_column_len(out) == 2);
+    geoda_column_free(out);
+    double determinante = -1.0;
+    CHECK(geoda_det(a, 2, &determinante) == GEODA_OK && determinante > 4.99 && determinante < 5.01);
+    out = (struct GeodaColumn *)1;
+    CHECK(geoda_inverse(a, 2, &out) == GEODA_OK && geoda_column_len(out) == 4);
+    geoda_column_free(out);
+    out = (struct GeodaColumn *)1;
+    CHECK(geoda_matmul(a, 2, a, 2, &out) == GEODA_OK && geoda_column_len(out) == 4);
+    geoda_column_free(out);
+
+    /* Singular [[1,2],[2,4]]: INVALID_ARGUMENT, `out` en NULL; el determinante es 0 sin error. */
+    const double s0[] = {1.0, 2.0}, s1[] = {2.0, 4.0};
+    struct GeodaColumn *sing0 = columna_plana("g", s0, 2), *sing1 = columna_plana("g", s1, 2);
+    const struct GeodaColumn *singular[] = {sing0, sing1};
+    out = (struct GeodaColumn *)1;
+    CHECK(geoda_inverse(singular, 2, &out) == GEODA_ERR_INVALID_ARGUMENT && out == NULL);
+    CHECK(geoda_lu_solve(singular, 2, b, &out) == GEODA_ERR_INVALID_ARGUMENT && out == NULL);
+    CHECK(geoda_det(singular, 2, &determinante) == GEODA_OK && determinante == 0.0);
+    /* No cuadrada (2 filas, 1 columna) y punteros NULL. */
+    const struct GeodaColumn *una[] = {col0};
+    determinante = -1.0;
+    CHECK(geoda_det(una, 1, &determinante) == GEODA_ERR_LENGTH_MISMATCH && determinante == -1.0);
+    CHECK(geoda_det(NULL, 1, &determinante) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_det(a, 2, NULL) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_matmul(a, 2, NULL, 0, &out) == GEODA_ERR_INVALID_ARGUMENT && out == NULL);
+    geoda_column_free(col0);
+    geoda_column_free(col1);
+    geoda_column_free(b);
+    geoda_column_free(sing0);
+    geoda_column_free(sing1);
+}
+
 /* Grafos: se crea uno con pesos, se consulta y se libera; los errores dejan los `out` en NULL. */
 static void prueba_grafo(void) {
     /* 0 -> 1 (4), 0 -> 2 (1), 2 -> 1 (2), 1 -> 3 (1); el nodo 4 queda aislado. */
@@ -532,6 +573,7 @@ int main(void) {
     prueba_cluster();
     prueba_arbol();
     prueba_apriori();
+    prueba_algebra();
 
     if (fallos == 0) {
         puts("smoke: ok");
