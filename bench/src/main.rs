@@ -13,6 +13,7 @@
 //! cargo run --release -p geoda-bench -- file 250000000    # archivo de 2 GB leido por trozos
 //! cargo run --release -p geoda-bench -- graph              # BFS y DFS de 1M nodos y 10M aristas
 //! cargo run --release -p geoda-bench -- graph 1000000 10000000   # incluye Dijkstra
+//! cargo run --release -p geoda-bench -- mining            # k-means, jerarquico, arbol y Apriori
 //! cargo run --release -p geoda-bench -- text              # edicion de 20 000 caracteres, LIS, Huffman y dedupe
 //! ```
 
@@ -20,8 +21,8 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use geoda_algo::{
-    Graph, Huffman, WeightedGraph, bfs, dedupe_similar, dfs, dijkstra, edit_distance, lis,
-    median_of_medians, merge_sort, quickselect,
+    Dataset, Graph, Huffman, KMeansParams, WeightedGraph, bfs, dedupe_similar, dfs, dijkstra,
+    edit_distance, kmeans, lis, median_of_medians, merge_sort, quickselect,
 };
 use geoda_core::file::{ColumnFileReader, ColumnFileWriter};
 use geoda_core::{Column, DataType, PrimitiveBuilder};
@@ -404,11 +405,63 @@ fn bench_dedupe(rng: &mut Rng, rows: usize) {
     }
 }
 
+/// Matriz sintetica de `rows` filas y `cols` variables: `groups` nubes gaussianas aproximadas
+/// (suma de tres uniformes) alrededor de centros repartidos en `[0, 100)`.
+fn blobs(rng: &mut Rng, rows: usize, cols: usize, groups: usize) -> Vec<Column> {
+    let centers: Vec<Vec<f64>> = (0..groups)
+        .map(|_| (0..cols).map(|_| unit(rng) * 100.0).collect())
+        .collect();
+    let mut columns = vec![Vec::with_capacity(rows); cols];
+    for _ in 0..rows {
+        let group = usize::try_from(rng.next() % groups as u64).expect("cabe");
+        for (j, column) in columns.iter_mut().enumerate() {
+            column.push(centers[group][j] + (unit(rng) + unit(rng) + unit(rng) - 1.5) * 4.0);
+        }
+    }
+    columns
+        .into_iter()
+        .map(|values| {
+            let mut builder = PrimitiveBuilder::<f64>::new();
+            for v in values {
+                builder.append(v);
+            }
+            builder.finish().expect("columna")
+        })
+        .collect()
+}
+
+/// Real uniforme en `[0, 1)` con la semilla fija.
+fn unit(rng: &mut Rng) -> f64 {
+    f64::from(u32::try_from(rng.next() >> 32).expect("cabe")) / 4_294_967_296.0
+}
+
+/// Mineria: k-means de 100 000 filas x 4 variables con k = 8.
+fn bench_mining() {
+    let mut rng = Rng(SEED);
+    let columns = blobs(&mut rng, 100_000, 4, 8);
+    let refs: Vec<&Column> = columns.iter().collect();
+    let data = Dataset::from_columns(&refs).expect("matriz");
+    let started = Instant::now();
+    let result = kmeans(black_box(&data), KMeansParams::new(8, 1)).expect("k-means");
+    println!(
+        "\nk-means de {} filas x {} variables, k = 8: inercia {:.0}, {} iteraciones en {} ms",
+        data.rows(),
+        data.cols(),
+        result.inertia,
+        result.iterations,
+        ms(started.elapsed())
+    );
+}
+
 fn ms(d: Duration) -> String {
     format!("{:.2}", d.as_secs_f64() * 1000.0)
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("mining") {
+        bench_mining();
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("text") {
         let len: usize = std::env::args().nth(2).map_or(20_000, |a| {
             a.parse().expect("la longitud debe ser un entero")
