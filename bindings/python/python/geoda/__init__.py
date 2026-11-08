@@ -6,6 +6,7 @@ from ._geoda import (
     column_len,
     corr,
     count,
+    dedupe,
     edit_distance,
     histogram,
     huffman_decode,

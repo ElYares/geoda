@@ -14,8 +14,8 @@ use std::ffi::c_char;
 use std::ptr;
 
 use geoda_algo::{
-    Method, Network, edit_distance_columns, huffman_decode_column, huffman_encode_column,
-    lis_column, percentile_column,
+    Method, Network, dedupe_column, edit_distance_columns, huffman_decode_column,
+    huffman_encode_column, lis_column, percentile_column,
 };
 use geoda_core::interop::arrow_c::{
     ArrowArray, ArrowSchema, export_column, export_field, import_column,
@@ -1210,6 +1210,51 @@ pub unsafe extern "C" fn geoda_huffman_decode(
         let data = huffman_decode_column(frequencies, bits)?;
         // SAFETY: `out_data` es escribible (arriba).
         unsafe { *out_data = into_handle(data) };
+        Ok(())
+    })
+}
+
+/// Agrupa las filas de una columna `Utf8` que son casi iguales: dos filas estan cerca si su
+/// distancia de edicion (por caracteres Unicode) es a lo sumo `max_distance`, y un grupo es una
+/// componente conexa de «estar cerca» (si `a~b` y `b~c`, los tres van juntos). Devuelve una
+/// columna `Int64` nueva por `*out_ids` con el grupo de cada fila (desde 0, por primera
+/// aparicion; nulo en las filas nulas) y escribe en `*out_count` cuantos grupos hay.
+///
+/// `*out_ids` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo,
+/// `*out_ids` queda en NULL y `*out_count` no se escribe: `GEODA_ERR_TYPE_MISMATCH` si no es
+/// `Utf8`.
+///
+/// # Safety
+/// `column` debe ser un handle valido; `out_ids` y `out_count` deben ser escribibles y no NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn geoda_column_dedupe(
+    column: *const GeodaColumn,
+    max_distance: usize,
+    out_ids: *mut *mut GeodaColumn,
+    out_count: *mut i64,
+) -> i32 {
+    guard(|| {
+        if out_count.is_null() {
+            return Err(invalid_argument("out_count es NULL"));
+        }
+        // SAFETY: `out_ids` es escribible si no es NULL (contrato).
+        unsafe { null_outs(&[out_ids]) }?;
+        // SAFETY: contrato de `column_ref`.
+        let result = dedupe_column(unsafe { column_ref(column, "column") }?, max_distance)?;
+        let ids = int64_nullable_column(
+            result
+                .ids
+                .iter()
+                .map(|id| id.map(to_i64).transpose())
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter(),
+        )?;
+        let count = to_i64(result.count)?;
+        // SAFETY: los `out` son escribibles (arriba).
+        unsafe {
+            *out_ids = into_handle(ids);
+            *out_count = count;
+        }
         Ok(())
     })
 }

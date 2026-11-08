@@ -13,15 +13,15 @@
 //! cargo run --release -p geoda-bench -- file 250000000    # archivo de 2 GB leido por trozos
 //! cargo run --release -p geoda-bench -- graph              # BFS y DFS de 1M nodos y 10M aristas
 //! cargo run --release -p geoda-bench -- graph 1000000 10000000   # incluye Dijkstra
-//! cargo run --release -p geoda-bench -- text              # edicion de 20 000 caracteres, LIS y Huffman de 1M
+//! cargo run --release -p geoda-bench -- text              # edicion de 20 000 caracteres, LIS, Huffman y dedupe
 //! ```
 
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use geoda_algo::{
-    Graph, Huffman, WeightedGraph, bfs, dfs, dijkstra, edit_distance, lis, median_of_medians,
-    merge_sort, quickselect,
+    Graph, Huffman, WeightedGraph, bfs, dedupe_similar, dfs, dijkstra, edit_distance, lis,
+    median_of_medians, merge_sort, quickselect,
 };
 use geoda_core::file::{ColumnFileReader, ColumnFileWriter};
 use geoda_core::{Column, DataType, PrimitiveBuilder};
@@ -368,6 +368,40 @@ fn bench_text(len: usize) {
         ms(encode_time),
         ms(started.elapsed())
     );
+
+    bench_dedupe(&mut rng, 100_000);
+}
+
+/// Deduplicacion de `rows` cadenas: salen de `rows / 5` palabras base de 6 a 11 letras y cada
+/// fila repite una base, con una letra cambiada en 3 de cada 10 (los casi-duplicados).
+fn bench_dedupe(rng: &mut Rng, rows: usize) {
+    let bases: Vec<String> = (0..rows / 5)
+        .map(|_| {
+            let len = 6 + usize::try_from(rng.next() % 6).expect("cabe");
+            random_text(rng, len)
+        })
+        .collect();
+    let owned: Vec<String> = (0..rows)
+        .map(|_| {
+            let base = &bases[usize::try_from(rng.next() % bases.len() as u64).expect("cabe")];
+            let mut chars: Vec<char> = base.chars().collect();
+            if rng.next() % 10 < 3 {
+                let at = usize::try_from(rng.next() % chars.len() as u64).expect("cabe");
+                chars[at] = char::from(b'a' + u8::try_from(rng.next() % 26).expect("cabe"));
+            }
+            chars.into_iter().collect()
+        })
+        .collect();
+    let input: Vec<Option<&str>> = owned.iter().map(|s| Some(s.as_str())).collect();
+    for max_distance in [0, 1, 2] {
+        let started = Instant::now();
+        let result = dedupe_similar(black_box(&input), max_distance).expect("deduplica");
+        println!(
+            "dedupe de {rows} cadenas con distancia <= {max_distance}: {} grupos en {} ms",
+            result.count,
+            ms(started.elapsed())
+        );
+    }
 }
 
 fn ms(d: Duration) -> String {

@@ -79,6 +79,7 @@ no conozca **hace fallar el caso**, no lo salta.
 | `histogram` | `n_bins`, `range` (opcional) | histograma de ancho fijo (`geoda_column_histogram`) | `expect.columns` |
 | `group_by` | `agg`, `ddof` (solo `var`/`std`) | agregado de `input2` por los grupos de `input` (`geoda_column_group_by`) | `expect.columns` |
 | `edit_distance` | — | distancia de edicion fila a fila entre `input` e `input2` (`geoda_column_edit_distance`) | `expect.columns` |
+| `dedupe` | `max_distance` | agrupa las filas de `input` (`utf8`) que estan cerca (`geoda_column_dedupe`) | `expect.columns` y `expect.count` |
 | `lis` | — | posiciones de la subsecuencia creciente mas larga (`geoda_column_lis`) | `expect.columns` |
 | `huffman_encode` | — | codifica los bytes de `input` (`geoda_huffman_encode`) | `expect.columns` |
 | `huffman_decode` | — | decodifica `input2` con las frecuencias de `input` (`geoda_huffman_decode`) | `expect.columns` |
@@ -174,6 +175,10 @@ la consulta. Las columnas de resultado, en este orden:
   compara con todas las filas de la otra. Una fila nula en cualquiera da nulo. Sale una columna
   `int64`. Cuenta caracteres Unicode, no bytes. Largos distintos sin una de 1 es
   `LENGTH_MISMATCH`; una entrada que no es `utf8`, `TYPE_MISMATCH`.
+- `dedupe`: `input` es `utf8`; `args.max_distance` (>= 0) es la distancia de edicion maxima para estar «cerca». Un
+  grupo es una componente conexa de «estar cerca» (si `a~b` y `b~c`, van juntos aunque `a` y `c` no
+  lo esten). Sale una columna `int64` con el grupo de cada fila (desde 0, por primera aparicion;
+  nulo en las filas nulas) y `expect.count` es cuantos grupos hay. Otro tipo es `TYPE_MISMATCH`.
 - `lis`: `int32`, `int64` o `float64` sin nulos ni `NaN`. Sale una columna `int64` con las
   posiciones de una subsecuencia **estrictamente** creciente mas larga, de menor a mayor. Un nulo
   o un `NaN` es `INVALID_ARGUMENT`; `bool` y `utf8`, `UNSUPPORTED`.

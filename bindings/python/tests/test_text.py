@@ -1,4 +1,4 @@
-"""Pruebas del texto de la fase 5: `edit_distance`, `lis` y Huffman (`huffman_encode` y
+"""Pruebas del texto de la fase 5: `edit_distance`, `dedupe`, `lis` y Huffman (`huffman_encode` y
 `huffman_decode`), y los casos de `spec/cases/text/` que se pueden ejecutar por el binding.
 """
 
@@ -63,6 +63,34 @@ class EditDistance(unittest.TestCase):
             geoda.edit_distance(pa.array([1, 2]), "a")
 
 
+class Dedupe(unittest.TestCase):
+    def test_near_duplicates(self):
+        result = geoda.dedupe(["Juan Perez", "Juan Pérez", "Ana", None, "Ana"], max_distance=1)
+        self.assertEqual(result, {"ids": [0, 0, 1, None, 1], "count": 2})
+
+    def test_default_distance_is_one(self):
+        self.assertEqual(geoda.dedupe(["casa", "cosa", "mesa"])["count"], 2)
+
+    def test_zero_groups_identical_only(self):
+        self.assertEqual(geoda.dedupe(["a", "b", "a"], max_distance=0)["ids"], [0, 1, 0])
+
+    def test_chain_joins_groups(self):
+        self.assertEqual(geoda.dedupe(["aaa", "abb", "aab"], 1)["count"], 1)
+
+    def test_empty(self):
+        self.assertEqual(geoda.dedupe([]), {"ids": [], "count": 0})
+
+    def test_not_text(self):
+        with self.assertRaises(TypeError):
+            geoda.dedupe([1, 2])
+
+    @unittest.skipIf(pa is None, "pyarrow no esta instalado")
+    def test_arrow_utf8_and_not_text(self):
+        self.assertEqual(geoda.dedupe(pa.array(["ab", "ac", None]))["ids"], [0, 0, None])
+        with self.assertRaises(TypeError):
+            geoda.dedupe(pa.array([1, 2]))
+
+
 class Lis(unittest.TestCase):
     def test_classic_case(self):
         result = geoda.lis([10, 9, 2, 5, 3, 7, 101, 18])
@@ -123,18 +151,22 @@ class Huffman(unittest.TestCase):
 
 
 class SpecCases(unittest.TestCase):
-    """Los casos `edit_distance` y `lis` de la spec dan lo mismo por el binding."""
+    """Los casos `edit_distance`, `lis` y `dedupe` de la spec dan lo mismo por el binding."""
 
     def test_cases(self):
         ran = 0
         for path in CASES:
             case = json.loads(path.read_text(encoding="utf-8"))
             op = case["op"]
-            if op not in ("edit_distance", "lis"):
+            if op not in ("edit_distance", "lis", "dedupe"):
                 continue
             with self.subTest(case=case["id"]):
                 ran += 1
-                if op == "edit_distance":
+                if op == "dedupe":
+                    call = lambda: geoda.dedupe(  # noqa: E731
+                        case["input"]["values"], case["args"]["max_distance"]
+                    )
+                elif op == "edit_distance":
                     call = lambda: geoda.edit_distance(  # noqa: E731
                         case["input"]["values"], case["input2"]["values"]
                     )
@@ -147,8 +179,12 @@ class SpecCases(unittest.TestCase):
                     continue
                 result = call()
                 want = case["expect"]["columns"][0]["values"]
-                self.assertEqual(result if op == "edit_distance" else result["indices"], want)
-        self.assertGreaterEqual(ran, 8)
+                if op == "dedupe":
+                    self.assertEqual(result["ids"], want)
+                    self.assertEqual(result["count"], case["expect"]["count"])
+                else:
+                    self.assertEqual(result if op == "edit_distance" else result["indices"], want)
+        self.assertGreaterEqual(ran, 13)
 
 
 if __name__ == "__main__":

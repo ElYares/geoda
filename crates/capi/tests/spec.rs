@@ -17,14 +17,14 @@ use geoda::{
     GEODA_AGG_VAR, GEODA_ERR_ALLOC, GEODA_ERR_FFI, GEODA_ERR_INTERNAL, GEODA_ERR_INVALID_ARGUMENT,
     GEODA_ERR_LENGTH_MISMATCH, GEODA_ERR_OUT_OF_BOUNDS, GEODA_ERR_PANIC, GEODA_ERR_TYPE_MISMATCH,
     GEODA_ERR_UNSUPPORTED, GEODA_OK, GeodaColumn, GeodaGraph, geoda_column_corr,
-    geoda_column_count, geoda_column_edit_distance, geoda_column_free, geoda_column_from_arrow,
-    geoda_column_group_by, geoda_column_histogram, geoda_column_len, geoda_column_lis,
-    geoda_column_max_f64, geoda_column_max_i64, geoda_column_mean, geoda_column_median,
-    geoda_column_min_f64, geoda_column_min_i64, geoda_column_null_count, geoda_column_percentile,
-    geoda_column_slice, geoda_column_std, geoda_column_sum_f64, geoda_column_sum_i64,
-    geoda_column_to_arrow, geoda_column_var, geoda_graph_bfs, geoda_graph_components,
-    geoda_graph_dijkstra, geoda_graph_free, geoda_graph_mst, geoda_graph_new,
-    geoda_graph_topological_order, geoda_huffman_decode, geoda_huffman_encode,
+    geoda_column_count, geoda_column_dedupe, geoda_column_edit_distance, geoda_column_free,
+    geoda_column_from_arrow, geoda_column_group_by, geoda_column_histogram, geoda_column_len,
+    geoda_column_lis, geoda_column_max_f64, geoda_column_max_i64, geoda_column_mean,
+    geoda_column_median, geoda_column_min_f64, geoda_column_min_i64, geoda_column_null_count,
+    geoda_column_percentile, geoda_column_slice, geoda_column_std, geoda_column_sum_f64,
+    geoda_column_sum_i64, geoda_column_to_arrow, geoda_column_var, geoda_graph_bfs,
+    geoda_graph_components, geoda_graph_dijkstra, geoda_graph_free, geoda_graph_mst,
+    geoda_graph_new, geoda_graph_topological_order, geoda_huffman_decode, geoda_huffman_encode,
     geoda_last_error_message,
 };
 use geoda_core::interop::arrow_c::{
@@ -463,6 +463,25 @@ fn run_op(op: &str, case: &Value, handle: Handle) -> Result<OpResult, String> {
         }
         "histogram" => run_histogram(case, &handle),
         "edit_distance" | "huffman_decode" => run_pair(op, case, &handle),
+        "dedupe" => {
+            let (mut out, mut count) = (ptr::null_mut::<GeodaColumn>(), -1_i64);
+            // SAFETY: handle valido y los `out` son escribibles.
+            let code = unsafe {
+                geoda_column_dedupe(
+                    handle.0,
+                    usize_arg(case, "max_distance")?,
+                    &raw mut out,
+                    &raw mut count,
+                )
+            };
+            if code != GEODA_OK {
+                return collect_outs(code, &[out]);
+            }
+            Ok(Ok(Outcome::Graph(
+                vec![Handle(out)],
+                vec![("count", Extra::Int(count))],
+            )))
+        }
         "lis" => {
             let mut out: *mut GeodaColumn = ptr::null_mut();
             // SAFETY: handle valido y `out` escribible.

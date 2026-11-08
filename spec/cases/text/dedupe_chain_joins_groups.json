@@ -1,0 +1,9 @@
+{
+  "spec_version": 1,
+  "id": "text/dedupe_chain_joins_groups",
+  "description": "componentes conexas: aaa~aab y aab~abb unen a los tres aunque aaa y abb esten a 2",
+  "input": { "dtype": "utf8", "values": ["aaa", "abb", "aab", "zzz"] },
+  "op": "dedupe",
+  "args": { "max_distance": 1 },
+  "expect": { "columns": [ { "dtype": "int64", "values": [0, 0, 0, 1] } ], "count": 2 }
+}

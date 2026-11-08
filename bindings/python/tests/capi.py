@@ -175,6 +175,10 @@ def _load():
             ctypes.c_int32,
         ),
         "geoda_column_edit_distance": ([p_handle, p_handle, ctypes.POINTER(p_handle)], ctypes.c_int32),
+        "geoda_column_dedupe": (
+            [p_handle, ctypes.c_size_t, ctypes.POINTER(p_handle), ctypes.POINTER(ctypes.c_int64)],
+            ctypes.c_int32,
+        ),
         "geoda_column_lis": ([p_handle, ctypes.POINTER(p_handle)], ctypes.c_int32),
         "geoda_huffman_encode": (
             [p_handle, ctypes.POINTER(p_handle), ctypes.POINTER(p_handle)],
@@ -321,6 +325,18 @@ class Column:
             self.handle, *(o.handle for o in others), *(ctypes.byref(o) for o in outs)
         )
         return Column._own(outs, code)
+
+    def dedupe(self, max_distance):
+        """`([ids], 0, count)` o `([], codigo, None)`; `self` es la columna `Utf8`."""
+        outs = [ctypes.c_void_p(None)]
+        count = ctypes.c_int64(-1)
+        code = LIB.geoda_column_dedupe(
+            self.handle, max_distance, ctypes.byref(outs[0]), ctypes.byref(count)
+        )
+        columns, code = Column._own(outs, code)
+        if code != OK:
+            return columns, code, None
+        return columns, code, count.value
 
     def huffman_encode(self):
         """`([bits, frecuencias], 0)` o `([], codigo)`; `self` son los bytes (`Int32`)."""

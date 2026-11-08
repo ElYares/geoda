@@ -34,6 +34,7 @@ Los nulos se ignoran. Un `NaN` en los datos da `NaN` en el resultado, nunca se o
 | `histogram(x, bins, range=None)` | `dict` con `edges`, `counts`, `below`, `above`, `nulls`, `nans` |
 | `group_by(claves).sum/count/min/max/mean/var/std(valores)` | `dict` con `keys` y `values` (listas; `None` es el grupo de claves nulas) |
 | `edit_distance(a, b)` | `int` con dos `str`; si no, lista con la distancia de cada fila (`None` si alguna es nula). Acepta `str`, listas de `str`/`None` o columnas Arrow de texto; las dos miden lo mismo o una mide 1. Cuenta caracteres Unicode |
+| `dedupe(x, max_distance=1)` | `dict` con `ids` (grupo de cada fila, desde 0; `None` en las nulas) y `count`. Dos cadenas estan cerca si su distancia de edicion es `<= max_distance`; un grupo es una componente conexa de «estar cerca» (si a~b y b~c van juntos aunque a y c no lo esten) |
 | `lis(x)` | `dict` con `length` e `indices`: la subsecuencia estrictamente creciente mas larga. `None` o `NaN` lanzan `ValueError` |
 | `huffman_encode(datos)` | `dict` con `bits` (`bytes`, empaquetados desde el bit mas alto), `bit_len` y `frequencies` (256 `int`). `datos` es `bytes`, `bytearray` o `str` (UTF-8) |
 | `huffman_decode(bits, bit_len, frequencies)` | `bytes`; la tabla se reconstruye de las frecuencias. Bits que no se pueden decodificar lanzan `ValueError` |

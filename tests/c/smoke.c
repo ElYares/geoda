@@ -119,6 +119,14 @@ static void prueba_texto(void) {
     CHECK(geoda_column_lis(NULL, &indices) == GEODA_ERR_INVALID_ARGUMENT);
     CHECK(geoda_column_lis(valores, NULL) == GEODA_ERR_INVALID_ARGUMENT);
 
+    /* Dedupe: solo acepta texto (Int64 es TYPE_MISMATCH) y deja los `out` en NULL. */
+    int64_t cuantos = -1;
+    indices = (struct GeodaColumn *)1;
+    CHECK(geoda_column_dedupe(valores, 1, &indices, &cuantos) == GEODA_ERR_TYPE_MISMATCH);
+    CHECK(indices == NULL && cuantos == -1);
+    CHECK(geoda_column_dedupe(NULL, 1, &indices, &cuantos) == GEODA_ERR_INVALID_ARGUMENT);
+    CHECK(geoda_column_dedupe(valores, 1, &indices, NULL) == GEODA_ERR_INVALID_ARGUMENT);
+
     /* Huffman: aaabbc -> 9 bits, 256 frecuencias, y de vuelta los mismos 6 bytes. */
     const int bytes[] = {97, 97, 97, 98, 98, 99};
     struct GeodaColumn *datos = columna_i32(bytes, 6);

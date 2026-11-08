@@ -1,7 +1,7 @@
 //! Binding de Python para geoda: `version`, `column_len`, `median`, `percentile` y los
 //! estadisticos escalares (`count`, `sum`, `min`, `max`, `mean`, `var`, `std`, `corr`), `histogram`
-//! y `group_aggregate` (la base de `geoda.group_by`), la clase `Graph` (fase 4) y el texto de la fase 5 (`edit_distance`, `lis`, `huffman_encode` y
-//! `huffman_decode`).
+//! y `group_aggregate` (la base de `geoda.group_by`), la clase `Graph` (fase 4) y el texto de la fase 5 (`edit_distance`, `dedupe`, `lis`,
+//! `huffman_encode` y `huffman_decode`).
 //!
 //! Todas las funciones numericas aceptan una lista o cualquier objeto con el protocolo Arrow
 //! `PyCapsule` (`__arrow_c_array__`): `pyarrow`, `polars`, `pandas` con Arrow... (S10). Los
@@ -19,8 +19,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList};
 
 use geoda_algo::{
-    Huffman, Method, Network, Value, edit_distance_columns, frequencies, huffman_from_counts,
-    lis_column, median_column, percentile_column,
+    Huffman, Method, Network, Value, dedupe_column, edit_distance_columns, frequencies,
+    huffman_from_counts, lis_column, median_column, percentile_column,
 };
 use geoda_core::interop::arrow_c::{ArrowArray, ArrowSchema, import_column};
 use geoda_core::{Column, DataType, Error, PrimitiveBuilder, Utf8Builder};
@@ -426,6 +426,32 @@ fn edit_distance<'py>(
     PyList::new(py, values)?.into_bound_py_any(py)
 }
 
+/// Agrupa las cadenas casi iguales: dos estan cerca si su distancia de edicion es a lo sumo
+/// `max_distance` (por caracteres Unicode), y un grupo es una componente conexa de «estar cerca»
+/// (si `a~b` y `b~c`, los tres van juntos aunque `a` y `c` no lo esten). `values` es una lista de
+/// `str`/`None` o una columna Arrow de texto. Devuelve `{"ids": [int | None], "count": int}`: el
+/// grupo de cada fila (desde 0, por primera aparicion; `None` en las filas nulas) y cuantos hay.
+///
+/// # Errors
+/// `TypeError` si la columna Arrow no es de texto.
+#[pyfunction]
+#[pyo3(signature = (values, max_distance=1))]
+fn dedupe<'py>(
+    py: Python<'py>,
+    values: &Bound<'py, PyAny>,
+    max_distance: usize,
+) -> PyResult<Bound<'py, PyDict>> {
+    let (column, _) = text_column(values)?;
+    let result = dedupe_column(&column, max_distance).map_err(|e| match e {
+        Error::TypeMismatch(_) => PyTypeError::new_err(e.to_string()),
+        _ => value_error(&e),
+    })?;
+    let out = PyDict::new(py);
+    out.set_item("ids", result.ids)?;
+    out.set_item("count", result.count)?;
+    Ok(out)
+}
+
 /// Subsecuencia estrictamente creciente mas larga (LIS) de una lista de numeros o una columna
 /// Arrow numerica. Devuelve `{"length": int, "indices": [int]}` con las posiciones de sus
 /// elementos, de menor a mayor.
@@ -626,6 +652,7 @@ fn _geoda(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(histogram, m)?)?;
     m.add_function(wrap_pyfunction!(group_aggregate, m)?)?;
     m.add_function(wrap_pyfunction!(edit_distance, m)?)?;
+    m.add_function(wrap_pyfunction!(dedupe, m)?)?;
     m.add_function(wrap_pyfunction!(lis, m)?)?;
     m.add_function(wrap_pyfunction!(huffman_encode, m)?)?;
     m.add_function(wrap_pyfunction!(huffman_decode, m)?)?;

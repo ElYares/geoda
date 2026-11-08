@@ -15,7 +15,7 @@ CASES_DIR = capi.ROOT / "spec" / "cases"
 SCALAR_OPS = ("count", "sum", "min", "max", "mean", "var", "std", "corr")
 COLUMNS_OPS = ("histogram", "group_by")
 GRAPH_OPS = ("graph_bfs", "graph_components", "graph_topological_order", "graph_dijkstra", "graph_mst")
-TEXT_OPS = ("edit_distance", "lis", "huffman_encode", "huffman_decode")
+TEXT_OPS = ("edit_distance", "lis", "huffman_encode", "huffman_decode", "dedupe")
 OPS = ("roundtrip", "len", "null_count", "slice", "median", "percentile") + SCALAR_OPS + COLUMNS_OPS + TEXT_OPS
 
 
@@ -38,6 +38,7 @@ def run_case(case):
 
     column, code = _import(case["input"])
     result = None
+    group_count = None  # `expect.count` de `dedupe`
     outputs = []  # columnas nuevas de `histogram` y `group_by`; se cierran todas
     try:
         if code == capi.OK:
@@ -58,6 +59,11 @@ def run_case(case):
                 value, integer, code = _run_scalar(op, case, column)
             elif op in COLUMNS_OPS:
                 outputs, code = _run_columns(op, case, column)
+            elif op == "dedupe":
+                max_distance = case.get("args", {}).get("max_distance")
+                if not isinstance(max_distance, int) or isinstance(max_distance, bool) or max_distance < 0:
+                    raise CaseFailure("args.max_distance falta o no es un entero >= 0")
+                outputs, code, group_count = column.dedupe(max_distance)
             elif op in TEXT_OPS:
                 outputs, code = _run_text(op, case, column)
             else:
@@ -69,6 +75,8 @@ def run_case(case):
             raise CaseFailure(f"esperaba el error {expect['error']!r}, pero la operacion tuvo exito")
         elif op in COLUMNS_OPS + TEXT_OPS:
             _check_columns(expect, outputs)
+            if group_count is not None and expect.get("count") != group_count:
+                raise CaseFailure(f"count: esperado {expect.get('count')!r}, salio {group_count!r}")
         elif op in SCALAR_OPS and integer:
             _check_int(expect, value)
         elif op in ("median", "percentile") + SCALAR_OPS:

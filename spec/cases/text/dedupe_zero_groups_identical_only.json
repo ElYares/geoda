@@ -1,0 +1,9 @@
+{
+  "spec_version": 1,
+  "id": "text/dedupe_zero_groups_identical_only",
+  "description": "con distancia 0 solo se agrupan las cadenas identicas",
+  "input": { "dtype": "utf8", "values": ["a", "b", "a", "ab", "b"] },
+  "op": "dedupe",
+  "args": { "max_distance": 0 },
+  "expect": { "columns": [ { "dtype": "int64", "values": [0, 1, 0, 2, 1] } ], "count": 3 }
+}

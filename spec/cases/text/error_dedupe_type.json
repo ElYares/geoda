@@ -1,0 +1,9 @@
+{
+  "spec_version": 1,
+  "id": "text/error_dedupe_type",
+  "description": "la deduplicacion solo acepta utf8",
+  "input": { "dtype": "int64", "values": [1, 2] },
+  "op": "dedupe",
+  "args": { "max_distance": 1 },
+  "expect": { "error": "TYPE_MISMATCH" }
+}

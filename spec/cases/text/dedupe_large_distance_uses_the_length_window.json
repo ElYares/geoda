@@ -1,0 +1,9 @@
+{
+  "spec_version": 1,
+  "id": "text/dedupe_large_distance_uses_the_length_window",
+  "description": "con distancia 3 (sin indice de borrados) se obtiene el mismo tipo de resultado exacto",
+  "input": { "dtype": "utf8", "values": ["abcdef", "abcxyz", "uvwxyz", "q"] },
+  "op": "dedupe",
+  "args": { "max_distance": 3 },
+  "expect": { "columns": [ { "dtype": "int64", "values": [0, 0, 0, 1] } ], "count": 2 }
+}

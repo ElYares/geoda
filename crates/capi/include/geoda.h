@@ -564,6 +564,23 @@ int32_t geoda_huffman_decode(const struct GeodaColumn *frequencies,
                              const struct GeodaColumn *bits,
                              struct GeodaColumn **out_data);
 
+// Agrupa las filas de una columna `Utf8` que son casi iguales: dos filas estan cerca si su
+// distancia de edicion (por caracteres Unicode) es a lo sumo `max_distance`, y un grupo es una
+// componente conexa de «estar cerca» (si `a~b` y `b~c`, los tres van juntos). Devuelve una
+// columna `Int64` nueva por `*out_ids` con el grupo de cada fila (desde 0, por primera
+// aparicion; nulo en las filas nulas) y escribe en `*out_count` cuantos grupos hay.
+//
+// `*out_ids` se libera con `geoda_column_free`. Si falla, devuelve un codigo negativo,
+// `*out_ids` queda en NULL y `*out_count` no se escribe: `GEODA_ERR_TYPE_MISMATCH` si no es
+// `Utf8`.
+//
+// # Safety
+// `column` debe ser un handle valido; `out_ids` y `out_count` deben ser escribibles y no NULL.
+int32_t geoda_column_dedupe(const struct GeodaColumn *column,
+                            size_t max_distance,
+                            struct GeodaColumn **out_ids,
+                            int64_t *out_count);
+
 // Libera una columna. Acepta NULL (no hace nada). Despues de llamarla el handle
 // ya no es valido; liberarlo dos veces es comportamiento indefinido.
 //

@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod components;
+pub mod dedupe;
 pub mod edit;
 pub mod graph;
 pub mod hash;
@@ -23,6 +24,7 @@ pub mod text;
 pub mod traverse;
 
 pub use components::{Components, UnionFind, components, topological_order};
+pub use dedupe::{Dedupe, MAX_INDEXED_DISTANCE, dedupe_column, dedupe_similar};
 pub use edit::{edit_distance, edit_distance_within};
 pub use graph::{Graph, WeightedGraph};
 pub use hash::{Grouping, HashTable, Key, Value, ValueCounts, group_column, value_counts_column};

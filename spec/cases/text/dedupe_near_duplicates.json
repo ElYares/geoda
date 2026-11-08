@@ -1,0 +1,9 @@
+{
+  "spec_version": 1,
+  "id": "text/dedupe_near_duplicates",
+  "description": "con distancia <= 1 las dos Perez van juntas, Ana sola y los nulos no pertenecen a ningun grupo",
+  "input": { "dtype": "utf8", "values": ["Juan Perez", "Juan Pérez", "Ana", null, "Ana"] },
+  "op": "dedupe",
+  "args": { "max_distance": 1 },
+  "expect": { "columns": [ { "dtype": "int64", "values": [0, 0, 1, null, 1] } ], "count": 2 }
+}
