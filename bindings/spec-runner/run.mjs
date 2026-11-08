@@ -1,15 +1,18 @@
-'use strict';
-// Corre el subconjunto de `spec/cases/` que el binding soporta (decision 015, O5). Lo que no puede
-// expresar JavaScript (nulos dentro de una matriz de `Float64Array`, listas de columnas vacias,
-// texto como variable numerica) se salta con el motivo: lo cubren los runners de Rust y Python.
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const geoda = require('..');
-const { Column, DTYPE } = geoda;
+// Runner compartido de `spec/` para los bindings de JavaScript (Node y WASM, decision 015 O5).
+//
+// Corre el subconjunto de `spec/cases/` que la superficie minima soporta. Lo que no puede expresar
+// JavaScript (nulos dentro de una matriz de `Float64Array`, listas de columnas vacias, texto como
+// variable numerica, `workers` distinto de 1) se salta con el motivo: lo cubren los runners de Rust y
+// Python, que siguen siendo los que cubren la spec entera.
+//
+// `api` es el modulo del binding: `Column`, `DTYPE` y las funciones `count`, `sum`, ..., `kmeans`.
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
-const CASES = path.resolve(__dirname, '../../../spec/cases');
+const CASES = fileURLToPath(new URL('../../spec/cases', import.meta.url));
 
 // Los enteros fuera de rango seguro (extremos de int64) se leen como BigInt.
 function parse(text) {
@@ -25,9 +28,11 @@ function files(dir) {
   });
 }
 
-const floatOf = (v) => (typeof v === 'string' ? { NaN: NaN, Infinity: Infinity, '-Infinity': -Infinity, '-0.0': -0 }[v] : Number(v));
+const SPECIAL = { NaN: NaN, Infinity: Infinity, '-Infinity': -Infinity, '-0.0': -0 };
+const floatOf = (v) => (typeof v === 'string' ? SPECIAL[v] : Number(v));
 
-function build(spec) {
+function build(api, spec) {
+  const { Column } = api;
   const nulls = spec.values.map((v) => v === null);
   const validity = nulls.some(Boolean) ? Uint8Array.from(nulls, (n) => (n ? 0 : 1)) : undefined;
   const raw = spec.values.map((v) => (v === null ? 0 : v));
@@ -41,7 +46,8 @@ function build(spec) {
   }
 }
 
-function read(column) {
+function read(api, column) {
+  const { DTYPE } = api;
   const valid = column.validity();
   const values = (() => {
     switch (column.dtype) {
@@ -74,7 +80,8 @@ function expectColumn(got, want, tolerance) {
   });
 }
 
-const rowsOf = (columns) => Array.from({ length: columns[0].values.length }, (_, i) => columns.map((c) => Number(floatOf(c.values[i]))));
+const rowsOf = (columns) =>
+  Array.from({ length: columns[0].values.length }, (_, i) => columns.map((c) => Number(floatOf(c.values[i]))));
 
 const SUPPORTED = new Set([
   'roundtrip', 'array_roundtrip', 'count', 'sum', 'min', 'max', 'mean', 'var', 'std', 'median', 'percentile',
@@ -91,42 +98,42 @@ function unsupported(c) {
   return null;
 }
 
-function run(c) {
-  const expect = c.expect;
+function run(api, c) {
+  const { expect } = c;
   const tolerance = expect.tolerance;
   const owned = [];
-  const make = (spec) => (owned.push(build(spec)), owned.at(-1));
+  const make = (spec) => (owned.push(build(api, spec)), owned.at(-1));
   try {
     let columns = null;
     let scalar;
     switch (c.op) {
       case 'roundtrip':
       case 'array_roundtrip':
-        columns = [read(make(c.input))];
+        columns = [read(api, make(c.input))];
         break;
-      case 'count': scalar = geoda.count(make(c.input)); break;
-      case 'sum': scalar = geoda.sum(make(c.input)); break;
-      case 'min': scalar = geoda.min(make(c.input)); break;
-      case 'max': scalar = geoda.max(make(c.input)); break;
-      case 'mean': scalar = geoda.mean(make(c.input)); break;
-      case 'var': scalar = geoda.variance(make(c.input), c.args.ddof); break;
-      case 'std': scalar = geoda.std(make(c.input), c.args.ddof); break;
-      case 'median': scalar = geoda.median(make(c.input)); break;
-      case 'percentile': scalar = geoda.percentile(make(c.input), floatOf(c.args.p)); break;
-      case 'corr': scalar = geoda.corr(make(c.input), make(c.input2)); break;
+      case 'count': scalar = api.count(make(c.input)); break;
+      case 'sum': scalar = api.sum(make(c.input)); break;
+      case 'min': scalar = api.min(make(c.input)); break;
+      case 'max': scalar = api.max(make(c.input)); break;
+      case 'mean': scalar = api.mean(make(c.input)); break;
+      case 'var': scalar = api.variance(make(c.input), c.args.ddof); break;
+      case 'std': scalar = api.std(make(c.input), c.args.ddof); break;
+      case 'median': scalar = api.median(make(c.input)); break;
+      case 'percentile': scalar = api.percentile(make(c.input), floatOf(c.args.p)); break;
+      case 'corr': scalar = api.corr(make(c.input), make(c.input2)); break;
       case 'edit_distance': {
-        const result = geoda.editDistance(make(c.input), make(c.input2));
+        const result = api.editDistance(make(c.input), make(c.input2));
         owned.push(result);
-        columns = [read(result)];
+        columns = [read(api, result)];
         break;
       }
-      case 'matmul': columns = [geoda.matmul(rowsOf(c.inputs), rowsOf(c.inputs2)).flat()]; break;
-      case 'lu_solve': columns = [geoda.solve(rowsOf(c.inputs), c.input.values.map(Number))]; break;
-      case 'det': scalar = geoda.det(rowsOf(c.inputs)); break;
-      case 'inverse': columns = [geoda.inverse(rowsOf(c.inputs)).flat()]; break;
+      case 'matmul': columns = [api.matmul(rowsOf(c.inputs), rowsOf(c.inputs2)).flat()]; break;
+      case 'lu_solve': columns = [api.solve(rowsOf(c.inputs), c.input.values.map(Number))]; break;
+      case 'det': scalar = api.det(rowsOf(c.inputs)); break;
+      case 'inverse': columns = [api.inverse(rowsOf(c.inputs)).flat()]; break;
       case 'kmeans': {
         const variables = c.inputs.map((col) => col.values.map(Number));
-        const r = geoda.kmeans(variables, c.args.k, { seed: BigInt(c.args.seed), maxIter: c.args.max_iter, tol: c.args.tol });
+        const r = api.kmeans(variables, c.args.k, { seed: BigInt(c.args.seed), maxIter: c.args.max_iter, tol: c.args.tol });
         assert.ok(same(r.inertia, expect.inertia, 'float64', tolerance), `inertia ${r.inertia}`);
         assert.equal(r.iterations, expect.iterations);
         columns = [r.labels.map(BigInt), r.centroids.flat()];
@@ -149,20 +156,22 @@ function run(c) {
   }
 }
 
-let executed = 0;
-for (const file of files(CASES)) {
-  const c = parse(fs.readFileSync(file, 'utf8'));
-  const reason = unsupported(c);
-  test(c.id, { skip: reason ?? undefined }, () => {
-    if (c.expect.error) {
-      assert.throws(() => run(c), (e) => e.category === c.expect.error, `esperaba ${c.expect.error}`);
-      executed++;
-    } else if (run(c)) {
-      executed++;
-    }
+/** Registra un `test` por caso de `spec/` y uno final que exige que se hayan ejecutado `minimum`. */
+export function registerSpecTests(api, { minimum }) {
+  let executed = 0;
+  for (const file of files(CASES)) {
+    const c = parse(fs.readFileSync(file, 'utf8'));
+    const reason = unsupported(c);
+    test(c.id, { skip: reason ?? undefined }, () => {
+      if (c.expect.error) {
+        assert.throws(() => run(api, c), (e) => e.category === c.expect.error, `esperaba ${c.expect.error}`);
+        executed++;
+      } else if (run(api, c)) {
+        executed++;
+      }
+    });
+  }
+  test('el subconjunto soportado es grande', () => {
+    assert.ok(executed >= minimum, `solo se ejecutaron ${executed} casos`);
   });
 }
-
-test('el subconjunto soportado es grande', () => {
-  assert.ok(executed >= 60, `solo se ejecutaron ${executed} casos`);
-});

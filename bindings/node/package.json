@@ -18,7 +18,7 @@
   },
   "scripts": {
     "build": "node-gyp rebuild",
-    "test": "node --expose-gc --test \"test/*.test.js\"",
+    "test": "node --expose-gc --test \"test/*.test.*js\"",
     "prepack": "cp ../../crates/capi/include/geoda.h src/geoda.h",
     "postpack": "rm -f src/geoda.h"
   }

@@ -1,0 +1,15 @@
+{
+  "name": "geoda-wasm",
+  "version": "0.0.0",
+  "description": "geoda compilado a WebAssembly (la C-API, ABI 1.x) con un cargador de JavaScript",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "main": "geoda.mjs",
+  "types": "geoda.d.ts",
+  "files": ["geoda.mjs", "geoda.d.ts", "geoda.wasm", "README.md"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "./build.sh",
+    "test": "node --expose-gc --test \"test/*.test.mjs\""
+  }
+}

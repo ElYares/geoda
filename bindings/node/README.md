@@ -47,7 +47,8 @@ Los enteros de 64 bits son `BigInt`. `workers` no se expone: siempre es 1.
 
 ## Pruebas
 
-`test/geoda.test.js` (valores de la spec) y `test/spec.test.js`, que ejecuta los casos de `spec/cases/` que el
+`test/geoda.test.js` (valores de la spec) y `test/spec.test.mjs`, que ejecuta (con el runner compartido
+[`bindings/spec-runner`](../spec-runner/run.mjs)) los casos de `spec/cases/` que el
 binding soporta (unos 65; los demás se saltan con el motivo: operación fuera de la superficie mínima, `workers`
 distinto de 1, nulos o texto dentro de una matriz). Los dos runners de Rust y Python siguen siendo los que
 cubren la spec entera.

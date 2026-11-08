@@ -109,7 +109,8 @@ pub fn aggregate_with_workers<A: Aggregate>(
 /// indice, sea cual sea el hilo que lo encontro; los demas hilos terminan su tramo.
 ///
 /// # Errors
-/// [`Error::InvalidArgument`] si `workers` es 0; ademas los de `compute`.
+/// [`Error::InvalidArgument`] si `workers` es 0; [`Error::Unsupported`] si `workers` es mayor que 1 en
+/// WebAssembly (no hay hilos); ademas los de `compute`.
 ///
 /// # Panics
 /// Si `compute` hace `panic` en un hilo, el `panic` se relanza en el hilo que llama.
@@ -123,6 +124,14 @@ pub fn fold_blocks<S: Send>(
     if workers == 0 {
         return Err(Error::InvalidArgument(
             "se necesita al menos un trabajador".to_string(),
+        ));
+    }
+    // WebAssembly no tiene hilos: pedir mas de uno es un error claro, no un `panic` al lanzarlos
+    // (decision 015, O6). El resultado no depende de `workers`, asi que 1 siempre sirve.
+    #[cfg(target_family = "wasm")]
+    if workers > 1 {
+        return Err(Error::Unsupported(
+            "WebAssembly no tiene hilos: workers debe ser 1".to_string(),
         ));
     }
     let blocks = len.div_ceil(BLOCK);

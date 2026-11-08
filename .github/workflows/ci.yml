@@ -91,6 +91,22 @@ jobs:
         working-directory: bindings/node
         run: npm test
 
+  wasm:
+    # La capi compilada a wasm32 (sin hilos ni WASI) y su cargador de JavaScript, probados en Node.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: bindings/wasm/build.sh
+      - name: pruebas
+        working-directory: bindings/wasm
+        run: npm test
+
   python:
     # El binding (PyO3 + maturin), el runner de spec por ctypes y el interop con
     # pyarrow. Falla si algun test de pyarrow se salta: aqui debe correr.
