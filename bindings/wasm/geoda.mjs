@@ -454,6 +454,111 @@ export class Geoda {
     });
   }
 
+  // --- Nivel 2 (decision 016): qr, svd, lstsq, lis, dedupe, histogram.
+
+  /** Factorizacion QR (Householder) de una matriz por filas con al menos tantas filas como columnas. */
+  qr(a) {
+    return this.#withColumns(this.#columnsOfRows(a), (scope, list, n) => {
+      const [q, r] = [scope.cell(), scope.cell()];
+      this.#check(this.#exports.geoda_qr(list, n, q, r));
+      const cols = a[0].length;
+      return { q: this.#takeFlat(scope.u32(q), a.length, cols), r: this.#takeFlat(scope.u32(r), cols, cols) };
+    });
+  }
+
+  /** SVD delgada `a = u diag(s) vt` (valores de mayor a menor, signo determinista). */
+  svd(a) {
+    return this.#withColumns(this.#columnsOfRows(a), (scope, list, n) => {
+      const [u, s, vt] = [scope.cell(), scope.cell(), scope.cell()];
+      this.#check(this.#exports.geoda_svd(list, n, u, s, vt));
+      const k = Math.min(a.length, a[0].length);
+      const values = this.#wrap(scope.u32(s));
+      try {
+        return {
+          u: this.#takeFlat(scope.u32(u), a.length, k),
+          s: Array.from(values.toFloat64Array()),
+          vt: this.#takeFlat(scope.u32(vt), k, a[0].length),
+        };
+      } finally {
+        values.free();
+      }
+    });
+  }
+
+  /** Minimos cuadrados `min |a x - b|` (QR): los coeficientes y la norma del residuo. */
+  lstsq(a, b) {
+    const rhs = this.Column.fromFloat64(Float64Array.from(b));
+    try {
+      return this.#withColumns(this.#columnsOfRows(a), (scope, list, n) => {
+        const [x, residual] = [scope.cell(), scope.cell()];
+        this.#check(this.#exports.geoda_lstsq(list, n, rhs.pointer, x, residual));
+        const coefficients = this.#wrap(scope.u32(x));
+        try {
+          return { coefficients: Array.from(coefficients.toFloat64Array()), residualNorm: scope.f64(residual) };
+        } finally {
+          coefficients.free();
+        }
+      });
+    } finally {
+      rhs.free();
+    }
+  }
+
+  /** Posiciones de la subsecuencia estrictamente creciente mas larga de una columna numerica sin nulos. */
+  lis(column) {
+    const result = this.#scoped((scope) => {
+      const out = scope.cell();
+      this.#check(this.#exports.geoda_column_lis(column.pointer, out));
+      return this.#wrap(scope.u32(out));
+    });
+    try {
+      return Array.from(result.toBigInt64Array(), Number);
+    } finally {
+      result.free();
+    }
+  }
+
+  /** Agrupa las cadenas a distancia de edicion <= `maxDistance` (componentes conexas); `ids[i]` es `null` en los nulos. */
+  dedupe(column, maxDistance = 1) {
+    if (!(maxDistance >= 0)) throw new GeodaError(-1, 'maxDistance debe ser >= 0');
+    const { result, count } = this.#scoped((scope) => {
+      const [ids, count] = [scope.cell(), scope.cell()];
+      this.#check(this.#exports.geoda_column_dedupe(column.pointer, maxDistance, ids, count));
+      return { result: this.#wrap(scope.u32(ids)), count: Number(scope.i64(count)) };
+    });
+    try {
+      const valid = result.validity();
+      return { ids: Array.from(result.toBigInt64Array(), (v, i) => (valid[i] ? Number(v) : null)), count };
+    } finally {
+      result.free();
+    }
+  }
+
+  /** Histograma de ancho fijo; `range` = `[lo, hi]` o `undefined` para `[min, max]`. */
+  histogram(column, bins, range) {
+    if (!(bins >= 0)) throw new GeodaError(-1, 'bins debe ser >= 0');
+    const [edges, counts, outside] = this.#scoped((scope) => {
+      const cells = [scope.cell(), scope.cell(), scope.cell()];
+      this.#check(
+        this.#exports.geoda_column_histogram(column.pointer, bins, range ? 1 : 0, range?.[0] ?? 0, range?.[1] ?? 0, 1, ...cells),
+      );
+      return cells.map((cell) => this.#wrap(scope.u32(cell)));
+    });
+    try {
+      const [below, above, nulls, nans] = Array.from(outside.toBigInt64Array(), Number);
+      return {
+        edges: Array.from(edges.toFloat64Array()),
+        counts: Array.from(counts.toBigInt64Array(), Number),
+        below,
+        above,
+        nulls,
+        nans,
+      };
+    } finally {
+      [edges, counts, outside].forEach((c) => c.free());
+    }
+  }
+
   /** `variables` es un arreglo de columnas (cada una `Float64Array` o `number[]`). */
   kmeans(variables, k, { seed = 0n, maxIter = 100, tol = 1e-4 } = {}) {
     const columns = variables.map((v) => this.Column.fromFloat64(Float64Array.from(v)));

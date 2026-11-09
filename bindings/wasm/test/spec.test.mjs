@@ -5,4 +5,4 @@ import { Geoda } from '../geoda.mjs';
 import { registerSpecTests } from '../../spec-runner/run.mjs';
 
 const geoda = await Geoda.load(fs.readFileSync(fileURLToPath(new URL('../geoda.wasm', import.meta.url))));
-registerSpecTests(geoda, { minimum: 60 });
+registerSpecTests(geoda, { minimum: 85 });

@@ -132,3 +132,31 @@ test('datos grandes: la memoria crece y las vistas se renuevan', () => {
   assert.equal(back[1234], 234);
   column.free();
 });
+
+test('nivel 2: qr, svd, lstsq', () => {
+  const { q, r } = geoda.qr([[3, 0], [4, 5]]);
+  assert.ok(q.flat().every((v, i) => near(v, [-0.6, 0.8, -0.8, -0.6][i])));
+  assert.ok(r.flat().every((v, i) => near(v, [-5, -4, 0, -3][i])));
+  const { u, s, vt } = geoda.svd([[1, 0], [0, 2], [0, 0]]);
+  assert.deepEqual(s, [2, 1]);
+  assert.deepEqual(u, [[0, 1], [1, 0], [0, 0]]);
+  assert.deepEqual(vt, [[0, 1], [1, 0]]);
+  assert.equal(geoda.svd([[1, 0, 0], [0, 3, 0]]).s.length, 2);
+  const fit = geoda.lstsq([[1, 0], [1, 1], [1, 2]], [1, 3, 5]);
+  assert.ok(near(fit.coefficients[0], 1) && near(fit.coefficients[1], 2) && near(fit.residualNorm, 0));
+  assert.throws(() => geoda.qr([[1, 2, 3]]), (e) => e.category === 'INVALID_ARGUMENT');
+  assert.throws(() => geoda.lstsq([[1, 2], [2, 4], [3, 6]], [1, 2, 3]), (e) => e.category === 'INVALID_ARGUMENT');
+});
+
+test('nivel 2: lis, dedupe, histogram', () => {
+  const series = Column.fromBigInt64(BigInt64Array.of(10n, 9n, 2n, 5n, 3n, 7n, 101n, 18n));
+  assert.deepEqual(geoda.lis(series), [2, 4, 5, 7]);
+  assert.throws(() => geoda.lis(Column.fromFloat64(Float64Array.of(1, NaN, 3))), (e) => e.category === 'INVALID_ARGUMENT');
+  const names = Column.fromStrings(['Juan Perez', 'Juan Pérez', 'Ana', null, 'Ana']);
+  assert.deepEqual(geoda.dedupe(names, 1), { ids: [0, 0, 1, null, 1], count: 2 });
+  assert.throws(() => geoda.dedupe(series, 1), (e) => e.category === 'TYPE_MISMATCH');
+  const values = Column.fromBigInt64(BigInt64Array.of(1n, 2n, 3n, 4n, 5n, 6n));
+  assert.deepEqual(geoda.histogram(values, 2, [2, 4]), { edges: [2, 3, 4], counts: [1, 2], below: 1, above: 2, nulls: 0, nans: 0 });
+  assert.throws(() => geoda.histogram(values, 0), (e) => e.category === 'INVALID_ARGUMENT');
+  [series, names, values].forEach((c) => c.free());
+});

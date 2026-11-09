@@ -16,7 +16,8 @@ geoda.kmeans([[0, 0, 10, 10], [0, 1, 10, 11]], 2, { seed: 1n }).labels;   // [0,
 column.free();                                                     // idempotente; el GC libera lo que se olvide
 ```
 
-La API es la misma que la del [binding de Node](../node/README.md) (columnas con typed arrays, `BigInt` para
+La API es la misma que la del [binding de Node](../node/README.md) (incluido el segundo nivel: `qr`, `svd`, `lstsq`,
+`lis`, `dedupe`, `histogram`; decisión 016) (columnas con typed arrays, `BigInt` para
 `int64`, errores con `code` y `category`), salvo que las funciones son métodos de la instancia (`geoda.mean`)
 y `Column` también (`geoda.Column`): cada instancia tiene su propia memoria.
 

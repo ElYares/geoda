@@ -54,5 +54,15 @@ export declare class Geoda {
   solve(a: Matrix, b: ArrayLike<number>): number[];
   det(a: Matrix): number;
   inverse(a: Matrix): number[][];
+  qr(a: Matrix): { q: number[][]; r: number[][] };
+  svd(a: Matrix): { u: number[][]; s: number[]; vt: number[][] };
+  lstsq(a: Matrix, b: ArrayLike<number>): { coefficients: number[]; residualNorm: number };
+  lis(column: Column): number[];
+  dedupe(column: Column, maxDistance?: number): { ids: (number | null)[]; count: number };
+  histogram(
+    column: Column,
+    bins: number,
+    range?: [number, number],
+  ): { edges: number[]; counts: number[]; below: number; above: number; nulls: number; nans: number };
   kmeans(variables: ArrayLike<number>[], k: number, options?: { seed?: bigint | number; maxIter?: number; tol?: number }): KMeansResult;
 }
