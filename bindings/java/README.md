@@ -26,15 +26,18 @@ La biblioteca se busca en la propiedad `-Dgeoda.lib=<ruta a libgeoda.so o su car
 `GEODA_LIB` o, si no, en el `java.library.path`. Hay que arrancar la JVM con
 `--enable-native-access=ALL-UNNAMED` (si no, el JDK avisa de cada acceso nativo).
 
-## Superficie (decisión 015, O4)
+## Superficie (decisiones 015 O4 y 016 P1)
 
 | | |
 |---|---|
 | `Column` | `of(double[] / int[] / long[], valid)`, `ofBooleans`, `ofStrings`; `size`, `nullCount`, `dtype`, `validity`, `toDoubleArray`, `toIntArray`, `toLongArray`, `toBooleanArray`, `toStringArray`, `close` (idempotente) |
 | Estadísticos | `Geoda.count`, `sum`, `min`, `max` (`Long` si la columna es entera, `Double` si no), `mean`, `var`, `std`, `median`, `percentile`, `corr` |
 | Texto | `Geoda.editDistance` (dos cadenas o dos columnas) |
-| Álgebra lineal | `matmul`, `solve`, `det`, `inverse` sobre `double[][]` **por filas** |
+| Álgebra lineal | `matmul`, `solve`, `det`, `inverse`, `qr`, `svd`, `lstsq` sobre `double[][]` **por filas** (`QrResult`, `SvdResult`, `LstsqResult`) |
+| Series, texto y estadística | `lis`, `dedupe` (`DedupeResult`), `histogram` (`HistogramResult`) |
 | Minería | `kmeans(variables, k, seed)` con las variables como **columnas** |
 | Errores | `GeodaException` con `code()`, `category()` y el mensaje de la capi |
+
+Quedan solo en Python (nivel 3, decisión 016 P2): los modelos con estado (regresión, PCA, árbol), los grafos, Huffman, Apriori y `group_by`.
 
 Una `Column` usada después de `close()` lanza `IllegalStateException`. `workers` no se expone: siempre es 1.

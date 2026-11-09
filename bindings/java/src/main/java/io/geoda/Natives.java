@@ -72,6 +72,15 @@ final class Natives {
     static final MethodHandle KMEANS = handle(
             "geoda_kmeans", INT, ADDRESS, LONG, LONG, LONG, DOUBLE, LONG, ADDRESS, ADDRESS, ADDRESS, ADDRESS);
 
+    static final MethodHandle QR = handle("geoda_qr", INT, ADDRESS, LONG, ADDRESS, ADDRESS);
+    static final MethodHandle SVD = handle("geoda_svd", INT, ADDRESS, LONG, ADDRESS, ADDRESS, ADDRESS);
+    static final MethodHandle LSTSQ = handle("geoda_lstsq", INT, ADDRESS, LONG, ADDRESS, ADDRESS, ADDRESS);
+    static final MethodHandle LIS = handle("geoda_column_lis", INT, ADDRESS, ADDRESS);
+    static final MethodHandle DEDUPE = handle("geoda_column_dedupe", INT, ADDRESS, LONG, ADDRESS, ADDRESS);
+    static final MethodHandle HISTOGRAM = handle(
+            "geoda_column_histogram", INT, ADDRESS, LONG, ValueLayout.JAVA_BOOLEAN, DOUBLE, DOUBLE, LONG,
+            ADDRESS, ADDRESS, ADDRESS);
+
     private Natives() {}
 
     private static SymbolLookup lookup() {

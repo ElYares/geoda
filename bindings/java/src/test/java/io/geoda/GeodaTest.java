@@ -45,6 +45,7 @@ public final class GeodaTest {
         text();
         linearAlgebra();
         clustering();
+        levelTwo();
         if (failures == 0) {
             System.out.println("GeodaTest: ok");
         } else {
@@ -161,6 +162,43 @@ public final class GeodaTest {
         double[][] inv = Geoda.inverse(new double[][] {{4, 7}, {2, 6}});
         check(near(inv[0][0], 0.6, 1e-12) && near(inv[0][1], -0.7, 1e-12) && near(inv[1][0], -0.2, 1e-12)
                 && near(inv[1][1], 0.4, 1e-12), "inversa");
+    }
+
+    static void levelTwo() {
+        QrResult f = Geoda.qr(new double[][] {{3, 0}, {4, 5}}); // spec: linalg/qr_3_4_5
+        double[] q = {-0.6, 0.8, -0.8, -0.6};
+        double[] r = {-5, -4, 0, -3};
+        for (int i = 0; i < 4; i++) {
+            check(near(f.q()[i / 2][i % 2], q[i], 1e-12) && near(f.r()[i / 2][i % 2], r[i], 1e-12), "qr entrada " + i);
+        }
+        SvdResult d = Geoda.svd(new double[][] {{1, 0}, {0, 2}, {0, 0}}); // spec: linalg/svd_permutation_exact
+        check(Arrays.equals(d.s(), new double[] {2, 1}), "svd: valores singulares");
+        check(Arrays.deepEquals(d.u(), new double[][] {{0, 1}, {1, 0}, {0, 0}}), "svd: u");
+        check(Arrays.deepEquals(d.vt(), new double[][] {{0, 1}, {1, 0}}), "svd: vt");
+        check(Geoda.svd(new double[][] {{1, 0, 0}, {0, 3, 0}}).s().length == 2, "svd de una matriz ancha");
+        LstsqResult fit = Geoda.lstsq(new double[][] {{1, 0}, {1, 1}, {1, 2}}, new double[] {1, 3, 5});
+        check(near(fit.coefficients()[0], 1, 1e-12) && near(fit.coefficients()[1], 2, 1e-12) && near(fit.residualNorm(), 0, 1e-12), "lstsq");
+        throwsCategory("INVALID_ARGUMENT", () -> Geoda.qr(new double[][] {{1, 2, 3}}), "qr de una matriz ancha");
+        throwsCategory("INVALID_ARGUMENT", () -> Geoda.lstsq(new double[][] {{1, 2}, {2, 4}, {3, 6}}, new double[] {1, 2, 3}),
+                "lstsq con columnas dependientes");
+
+        try (Column series = Column.of(new long[] {10, 9, 2, 5, 3, 7, 101, 18})) {
+            check(Arrays.equals(Geoda.lis(series), new long[] {2, 4, 5, 7}), "lis (spec text/lis_int64)");
+            throwsCategory("TYPE_MISMATCH", () -> Geoda.dedupe(series, 1), "dedupe de una columna entera");
+        }
+        try (Column nan = Column.of(new double[] {1.0, Double.NaN, 3.0})) {
+            throwsCategory("INVALID_ARGUMENT", () -> Geoda.lis(nan), "lis con NaN");
+        }
+        try (Column names = Column.ofStrings(new String[] {"Juan Perez", "Juan P\u00e9rez", "Ana", null, "Ana"})) {
+            DedupeResult groups = Geoda.dedupe(names, 1);
+            check(groups.count() == 2 && Arrays.equals(groups.ids(), new Long[] {0L, 0L, 1L, null, 1L}), "dedupe (spec)");
+        }
+        try (Column values = Column.of(new long[] {1, 2, 3, 4, 5, 6})) {
+            HistogramResult h = Geoda.histogram(values, 2, new double[] {2, 4});
+            check(Arrays.equals(h.edges(), new double[] {2, 3, 4}) && Arrays.equals(h.counts(), new long[] {1, 2}), "histograma: bordes y conteos");
+            check(h.below() == 1 && h.above() == 2 && h.nulls() == 0 && h.nans() == 0, "histograma: fuera de rango");
+            throwsCategory("INVALID_ARGUMENT", () -> Geoda.histogram(values, 0, null), "histograma de 0 cubos");
+        }
     }
 
     static void clustering() {

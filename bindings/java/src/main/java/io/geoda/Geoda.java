@@ -146,6 +146,113 @@ public final class Geoda {
         }
     }
 
+    // --- Nivel 2 (decision 016): qr, svd, lstsq, lis, dedupe, histogram.
+
+    /** Factorizacion QR (Householder); hacen falta al menos tantas filas como columnas. */
+    public static QrResult qr(double[][] a) {
+        try (Arena arena = Arena.ofConfined(); Columns list = Columns.of(a)) {
+            MemorySegment q = arena.allocate(Natives.ADDRESS);
+            MemorySegment r = arena.allocate(Natives.ADDRESS);
+            Natives.check((int) Natives.QR.invoke(list.pointers(arena), (long) list.size(), q, r));
+            try (Column qc = Columns.wrap(q.get(Natives.ADDRESS, 0)); Column rc = Columns.wrap(r.get(Natives.ADDRESS, 0))) {
+                return new QrResult(reshape(qc.toDoubleArray(), a.length, a[0].length), reshape(rc.toDoubleArray(), a[0].length, a[0].length));
+            }
+        } catch (Throwable t) {
+            throw Natives.rethrow(t);
+        }
+    }
+
+    /** SVD delgada {@code a = u diag(s) vt} (valores de mayor a menor, signo determinista). */
+    public static SvdResult svd(double[][] a) {
+        try (Arena arena = Arena.ofConfined(); Columns list = Columns.of(a)) {
+            MemorySegment u = arena.allocate(Natives.ADDRESS);
+            MemorySegment s = arena.allocate(Natives.ADDRESS);
+            MemorySegment vt = arena.allocate(Natives.ADDRESS);
+            Natives.check((int) Natives.SVD.invoke(list.pointers(arena), (long) list.size(), u, s, vt));
+            int k = Math.min(a.length, a[0].length);
+            try (Column uc = Columns.wrap(u.get(Natives.ADDRESS, 0));
+                    Column sc = Columns.wrap(s.get(Natives.ADDRESS, 0));
+                    Column vc = Columns.wrap(vt.get(Natives.ADDRESS, 0))) {
+                return new SvdResult(reshape(uc.toDoubleArray(), a.length, k), sc.toDoubleArray(), reshape(vc.toDoubleArray(), k, a[0].length));
+            }
+        } catch (Throwable t) {
+            throw Natives.rethrow(t);
+        }
+    }
+
+    /** Minimos cuadrados {@code min |a x - b|} por QR; columnas dependientes lanzan INVALID_ARGUMENT. */
+    public static LstsqResult lstsq(double[][] a, double[] b) {
+        try (Arena arena = Arena.ofConfined(); Columns list = Columns.of(a); Column rhs = Column.of(b)) {
+            MemorySegment x = arena.allocate(Natives.ADDRESS);
+            MemorySegment residual = arena.allocate(Natives.DOUBLE);
+            Natives.check((int) Natives.LSTSQ.invoke(list.pointers(arena), (long) list.size(), rhs.handle(), x, residual));
+            try (Column xc = Columns.wrap(x.get(Natives.ADDRESS, 0))) {
+                return new LstsqResult(xc.toDoubleArray(), residual.get(Natives.DOUBLE, 0));
+            }
+        } catch (Throwable t) {
+            throw Natives.rethrow(t);
+        }
+    }
+
+    /** Posiciones de la subsecuencia estrictamente creciente mas larga de una columna numerica sin nulos ni NaN. */
+    public static long[] lis(Column column) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(Natives.ADDRESS);
+            Natives.check((int) Natives.LIS.invoke(column.handle(), out));
+            try (Column positions = Columns.wrap(out.get(Natives.ADDRESS, 0))) {
+                return positions.toLongArray();
+            }
+        } catch (Throwable t) {
+            throw Natives.rethrow(t);
+        }
+    }
+
+    /** Agrupa las cadenas a distancia de edicion <= {@code maxDistance} (componentes conexas de "estar cerca"). */
+    public static DedupeResult dedupe(Column column, long maxDistance) {
+        if (maxDistance < 0) {
+            throw new GeodaException(-1, "maxDistance debe ser >= 0");
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment ids = arena.allocate(Natives.ADDRESS);
+            MemorySegment count = arena.allocate(Natives.LONG);
+            Natives.check((int) Natives.DEDUPE.invoke(column.handle(), maxDistance, ids, count));
+            try (Column groups = Columns.wrap(ids.get(Natives.ADDRESS, 0))) {
+                long[] values = groups.toLongArray();
+                boolean[] valid = groups.validity();
+                Long[] out = new Long[values.length];
+                for (int i = 0; i < out.length; i++) {
+                    out[i] = valid[i] ? values[i] : null;
+                }
+                return new DedupeResult(out, count.get(Natives.LONG, 0));
+            }
+        } catch (Throwable t) {
+            throw Natives.rethrow(t);
+        }
+    }
+
+    /** Histograma de ancho fijo con {@code bins} cubos; {@code range} es {@code {lo, hi}} o {@code null} para [min, max]. */
+    public static HistogramResult histogram(Column column, long bins, double[] range) {
+        if (bins < 0) {
+            throw new GeodaException(-1, "bins debe ser >= 0");
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment edges = arena.allocate(Natives.ADDRESS);
+            MemorySegment counts = arena.allocate(Natives.ADDRESS);
+            MemorySegment outside = arena.allocate(Natives.ADDRESS);
+            Natives.check((int) Natives.HISTOGRAM.invoke(
+                    column.handle(), bins, range != null, range != null ? range[0] : 0.0, range != null ? range[1] : 0.0,
+                    1L, edges, counts, outside));
+            try (Column e = Columns.wrap(edges.get(Natives.ADDRESS, 0));
+                    Column c = Columns.wrap(counts.get(Natives.ADDRESS, 0));
+                    Column o = Columns.wrap(outside.get(Natives.ADDRESS, 0))) {
+                long[] out = o.toLongArray();
+                return new HistogramResult(e.toDoubleArray(), c.toLongArray(), out[0], out[1], out[2], out[3]);
+            }
+        } catch (Throwable t) {
+            throw Natives.rethrow(t);
+        }
+    }
+
     // --- K-means.
 
     /**
