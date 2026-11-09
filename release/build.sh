@@ -37,6 +37,9 @@ bindings/java/build.sh >/dev/null
 cp bindings/java/build/geoda.jar "$salida/"
 cp bindings/wasm/geoda.wasm "$salida/"
 
+echo "== Licencias de terceros =="
+cargo deny list --format tsv >"$salida/THIRD_PARTY_LICENSES" 2>/dev/null
+
 (cd "$salida" && sha256sum -- * | grep -v SHA256SUMS > SHA256SUMS)
 echo "== listo: $salida =="
 ls -l "$salida"
