@@ -20,8 +20,11 @@ publicación.
 
 1. Decide si el repositorio pasa a público (PyPI/npm/crates.io lo exponen en la ficha) y revisa la licencia
    (`MIT OR Apache-2.0`).
-2. Sube las versiones: todo está en `0.0.0` (`Cargo.toml` del workspace, `package.json` de Node y WASM).
-   Sigue [`docs/abi.md`](docs/abi.md): la versión del paquete y la de la ABI son cosas distintas.
+2. Sube las versiones con `release/bump.sh X.Y.Z`: cambia a la vez `Cargo.toml` del workspace, `Cargo.lock` y los
+   `package.json` de Node y WASM (Python la lee del `Cargo.toml`). Hoy todo está en `0.0.0`. La ABI
+   (`abi/VERSION`) **no** se toca con el script: tiene su propia versión, ver
+   [`docs/versiones.md`](docs/versiones.md) y [`docs/abi.md`](docs/abi.md).
+   Pasa lo de «Sin publicar» de `CHANGELOG.md` a una sección con el número y la fecha.
 3. `git status` limpio, CI en verde en `main` y `abi/check.sh` sin cambios.
 4. Corre `release/build.sh` y comprueba `SHA256SUMS`.
 

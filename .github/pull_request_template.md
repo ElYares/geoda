@@ -10,6 +10,7 @@
 - [ ] Una función nueva de la capi trae su caso en `spec/`
 - [ ] Si toqué la capi: `tests/c/run.sh` y `abi/check.sh` pasan (y, si añadí una función, subí `ABI_MINOR` y corrí `abi/check.sh --update`)
 - [ ] Si toqué un binding: corrí sus tests (ver `README.md`)
+- [ ] Si el cambio se ve desde fuera (API, comportamiento, ABI): añadí una línea en `CHANGELOG.md`, bajo «Sin publicar»
 - [ ] Todo `unsafe` nuevo lleva su comentario `SAFETY`
 - [ ] Identificadores en inglés; comentarios, docs y mensajes de error en español
 - [ ] `git status` limpio de artefactos (`build/`, `target/`)
