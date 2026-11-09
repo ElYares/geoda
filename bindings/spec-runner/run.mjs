@@ -89,9 +89,16 @@ const SUPPORTED = new Set([
   'histogram',
 ]);
 
+// Funcion del binding que necesita cada operacion cuando no se llama igual que la operacion.
+const API_NAME = { var: 'variance', lu_solve: 'solve', inverse: 'inverse', edit_distance: 'editDistance' };
+const NEEDS_NO_API = new Set(['roundtrip', 'array_roundtrip']);
+
 // Devuelve el motivo si el caso no se puede expresar en JavaScript.
-function unsupported(c) {
+function unsupported(api, c) {
   if (!SUPPORTED.has(c.op)) return 'operacion fuera de la superficie minima';
+  if (!NEEDS_NO_API.has(c.op) && typeof api[API_NAME[c.op] ?? c.op] !== 'function') {
+    return 'el binding aun no expone esta funcion';
+  }
   if (c.args && c.args.workers !== undefined && c.args.workers !== 1) return 'workers: el binding siempre usa 1';
   const lists = [c.inputs, c.inputs2].filter(Boolean);
   if (lists.some((l) => l.length === 0)) return 'lista de columnas vacia';
@@ -190,7 +197,7 @@ export function registerSpecTests(api, { minimum }) {
   let executed = 0;
   for (const file of files(CASES)) {
     const c = parse(fs.readFileSync(file, 'utf8'));
-    const reason = unsupported(c);
+    const reason = unsupported(api, c);
     test(c.id, { skip: reason ?? undefined }, () => {
       if (c.expect.error) {
         assert.throws(() => run(api, c), (e) => e.category === c.expect.error, `esperaba ${c.expect.error}`);
