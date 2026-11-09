@@ -1,0 +1,29 @@
+name: Función nueva
+description: Proponer un algoritmo, una función o un cambio de diseño
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Qué problema resuelve
+      description: Qué quieres hacer y no puedes hacer hoy.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Propuesta
+      description: Nombre de la función, entradas, salida y casos de error. Si cambia la C-API, ten en cuenta que la ABI 1.0 está congelada (docs/abi.md).
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Ejemplo con resultado conocido
+      description: Una entrada pequeña y el resultado exacto. Servirá de caso en `spec/`.
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribución
+      options:
+        - label: Estoy dispuesta o dispuesto a escribir el pull request

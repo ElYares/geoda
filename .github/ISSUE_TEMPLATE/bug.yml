@@ -1,0 +1,40 @@
+name: Error
+description: Algo falla o da un resultado incorrecto
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Si el problema es de seguridad (memoria, aborto del proceso con una entrada), **no uses este formulario**: lee SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Versión o commit
+      description: "Por ejemplo `main` en `a1b2c3d`, o el resultado de `geoda.version()`"
+    validations:
+      required: true
+  - type: dropdown
+    id: binding
+    attributes:
+      label: Dónde ocurre
+      options: [Núcleo Rust, C-API, Python, C++, Java, Node, WebAssembly]
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Cómo reproducirlo
+      description: La entrada mínima y los pasos. Un caso de `spec/` que falle es lo ideal.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Qué esperabas y qué pasó
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Sistema
+      description: Sistema operativo, arquitectura y versión de Rust, Python, JDK o Node según el caso

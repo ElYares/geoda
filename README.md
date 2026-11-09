@@ -50,6 +50,10 @@ bindings/wasm/build.sh && (cd bindings/wasm && npm test)
 Python: ver [`bindings/python/README.md`](bindings/python/README.md). Benchmarks: `cargo run --release -p geoda-bench`
 (`-- text`, `-- mining`, `-- linalg`, `-- graph`, `-- file`).
 
+## Contribuir
+
+Lee [`CONTRIBUTING.md`](CONTRIBUTING.md). Para reportar una vulnerabilidad: [`SECURITY.md`](SECURITY.md).
+
 ## Publicar
 
 Nada se publica solo: [`RELEASING.md`](RELEASING.md) explica cómo construir los paquetes (`release/build.sh`), qué seguros

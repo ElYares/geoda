@@ -1,0 +1,11 @@
+name: Pregunta
+description: Dudas de uso o de diseño
+labels: ["question"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Qué quieres saber
+      description: Cuéntanos qué intentas hacer y qué leíste ya (README, docs/, spec/).
+    validations:
+      required: true

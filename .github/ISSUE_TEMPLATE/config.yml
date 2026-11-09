@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Reportar una vulnerabilidad
+    url: https://github.com/ElYares/geoda/security/advisories/new
+    about: No abras un issue público; usa el reporte privado. Lee SECURITY.md.
