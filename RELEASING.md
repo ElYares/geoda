@@ -86,6 +86,6 @@ npm tiene que existir en tu cuenta.
 
 ## C y C++ (sin registro)
 
-`geoda-cpp.tar.gz` y `libgeoda.so` se pueden adjuntar a un *release* de GitHub con la cuenta personal
-(`GH_TOKEN=$(gh auth token --user ElYares) gh release create vX.Y.Z dist/geoda-cpp.tar.gz dist/libgeoda.so dist/SHA256SUMS`).
+`geoda-cpp.tar.gz` y `libgeoda.so` se pueden adjuntar a un *release* de GitHub
+(`gh release create vX.Y.Z dist/geoda-cpp.tar.gz dist/libgeoda.so dist/SHA256SUMS`).
 En un repositorio privado solo lo ven los colaboradores.
