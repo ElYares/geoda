@@ -23,6 +23,13 @@ jobs:
       - name: geoda-core sin dependencias
         run: test "$(cargo tree -p geoda-core --edges normal,build,dev --prefix none | wc -l)" -eq 1
 
+  enlaces:
+    # Los enlaces relativos de los .md apuntan a archivos que existen.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: tests/check_links.py
+
   capi:
     # La C-API vista desde C: cabecera sin diff y smoke test (con ASan/UBSan/LSan).
     runs-on: ubuntu-latest
