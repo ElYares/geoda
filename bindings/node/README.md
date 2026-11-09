@@ -4,7 +4,7 @@ Binding de Node sobre la C-API (ABI 1.x, [`docs/abi.md`](../../docs/abi.md)): un
 C** (`src/addon.c`, sin `napi-rs`) y una capa de JavaScript (`index.js`, con tipos en `index.d.ts`).
 
 ```js
-const geoda = require('geoda');
+const geoda = require('@elyares/geoda');
 const column = geoda.Column.fromFloat64(Float64Array.of(1.5, 99, 3.5), Uint8Array.of(1, 0, 1)); // el 99 es nulo
 geoda.mean(column);                                          // 2.5
 geoda.solve([[2, 1], [1, 3]], [3, 5]);                       // [0.8, 1.4]

@@ -1,8 +1,23 @@
 {
-  "name": "geoda",
+  "name": "@elyares/geoda",
   "version": "0.0.0",
+  "private": true,
   "description": "Analisis, ciencia y mineria de datos con nucleo en Rust (binding de Node sobre la C-API, ABI 1.x)",
   "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ElYares/geoda.git",
+    "directory": "bindings/node"
+  },
+  "bugs": {
+    "url": "https://github.com/ElYares/geoda/issues"
+  },
+  "keywords": [
+    "data-science",
+    "statistics",
+    "rust",
+    "native-addon"
+  ],
   "main": "index.js",
   "types": "index.d.ts",
   "files": [

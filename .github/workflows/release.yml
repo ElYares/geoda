@@ -1,0 +1,36 @@
+name: Release (construye paquetes, NO publica)
+
+# Solo se dispara a mano. Construye la wheel de Python, los tarballs de npm (Node y WASM), el jar, el .wasm,
+# las cabeceras de C++ y libgeoda.so, y los sube como artefactos de Actions con su SHA-256. No usa secretos
+# ni tiene ningun paso de publicacion (decision 016): publicar es manual, ver RELEASING.md.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paquetes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+      - run: pip install maturin
+      - run: release/build.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paquetes-geoda
+          path: dist/
+          if-no-files-found: error

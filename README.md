@@ -50,6 +50,11 @@ bindings/wasm/build.sh && (cd bindings/wasm && npm test)
 Python: ver [`bindings/python/README.md`](bindings/python/README.md). Benchmarks: `cargo run --release -p geoda-bench`
 (`-- text`, `-- mining`, `-- linalg`, `-- graph`, `-- file`).
 
+## Publicar
+
+Nada se publica solo: [`RELEASING.md`](RELEASING.md) explica cómo construir los paquetes (`release/build.sh`), qué seguros
+quitar y qué credencial pide cada registro (PyPI, npm, Maven Central, crates.io).
+
 ## Licencia
 
 Doble licencia, a elección: [MIT](LICENSE-MIT) o [Apache-2.0](LICENSE-APACHE).

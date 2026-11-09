@@ -1,13 +1,35 @@
 {
-  "name": "geoda-wasm",
+  "name": "@elyares/geoda-wasm",
   "version": "0.0.0",
+  "private": true,
   "description": "geoda compilado a WebAssembly (la C-API, ABI 1.x) con un cargador de JavaScript",
   "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ElYares/geoda.git",
+    "directory": "bindings/wasm"
+  },
+  "bugs": {
+    "url": "https://github.com/ElYares/geoda/issues"
+  },
+  "keywords": [
+    "data-science",
+    "statistics",
+    "rust",
+    "wasm"
+  ],
   "type": "module",
   "main": "geoda.mjs",
   "types": "geoda.d.ts",
-  "files": ["geoda.mjs", "geoda.d.ts", "geoda.wasm", "README.md"],
-  "engines": { "node": ">=22" },
+  "files": [
+    "geoda.mjs",
+    "geoda.d.ts",
+    "geoda.wasm",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "./build.sh",
     "test": "node --expose-gc --test \"test/*.test.mjs\""

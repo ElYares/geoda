@@ -16,3 +16,4 @@ bindings/python/dist/
 build/
 *.tgz
 bindings/wasm/geoda.wasm
+dist/

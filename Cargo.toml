@@ -8,6 +8,8 @@ edition = "2024"
 rust-version = "1.98"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ElYares/geoda"
+# Ningun crate se publica en crates.io (decision 016, P3): quitar esto a proposito, por crate, al publicar.
+publish = false
 
 [workspace.lints.rust]
 unsafe_code = "deny"

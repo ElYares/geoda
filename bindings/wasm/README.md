@@ -30,7 +30,7 @@ cd bindings/wasm && npm test  # pruebas propias + el subconjunto de spec/ contra
 
 `build.sh` usa el `cargo` del PATH si tiene el objetivo `wasm32-unknown-unknown`
 (`rustup target add wasm32-unknown-unknown`). Si no, busca una toolchain upstream aislada en
-`$GEODA_WASM_TOOLCHAIN` o `~/.local/share/geoda-wasm/toolchain`: el `std` de wasm32 de upstream no es
+`$GEODA_WASM_TOOLCHAIN` o `~/.local/share/@elyares/geoda-wasm/toolchain`: el `std` de wasm32 de upstream no es
 compatible con el `rustc` de distribuciones como Arch.
 
 ## Qué cambia respecto a la versión nativa
