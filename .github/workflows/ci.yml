@@ -5,6 +5,15 @@ on:
     branches: [main]
   pull_request:
 
+# Solo lectura por defecto (HU-075): ningun job necesita escribir ni usa secretos.
+permissions:
+  contents: read
+
+# Un push nuevo cancela el CI anterior de la misma rama, salvo en main.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -12,14 +21,19 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           components: rustfmt, clippy
       - run: cargo fmt --all --check
       # `geoda-py` necesita un interprete de Python: lo cubre el job `python`.
       - run: cargo clippy --workspace --exclude geoda-py --all-targets -- -D warnings
       - run: cargo test --workspace --exclude geoda-py
+      - name: cargo deny (licencias, fuentes y avisos)
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
       - name: geoda-core sin dependencias
         run: test "$(cargo tree -p geoda-core --edges normal,build,dev --prefix none | wc -l)" -eq 1
 
@@ -27,17 +41,19 @@ jobs:
     # Los enlaces relativos de los .md apuntan a archivos que existen.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: tests/check_links.py
 
   capi:
     # La C-API vista desde C: cabecera sin diff y smoke test (con ASan/UBSan/LSan).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
       # Compilar cbindgen tarda ~1m30s: se cachea el binario por version.
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         id: cbindgen
         with:
           path: ~/.cargo/bin/cbindgen
@@ -55,8 +71,10 @@ jobs:
       matrix:
         cxx: [g++, clang++]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
       - run: cargo build -p geoda-capi
       - name: cmake
         run: |
@@ -70,9 +88,11 @@ jobs:
     # El binding de Java con la API de memoria externa (FFM, JDK 22+): sin jextract.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           distribution: temurin
           java-version: "25"
@@ -83,9 +103,11 @@ jobs:
     # El addon N-API (C) y su capa de JavaScript, con el subconjunto de spec/ que soporta.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
       - run: cargo build -p geoda-capi
@@ -102,11 +124,12 @@ jobs:
     # La capi compilada a wasm32 (sin hilos ni WASI) y su cargador de JavaScript, probados en Node.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: wasm32-unknown-unknown
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
       - run: bindings/wasm/build.sh
@@ -122,11 +145,12 @@ jobs:
       # `maturin develop` instala en este entorno virtual.
       VIRTUAL_ENV: ${{ github.workspace }}/.venv
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           components: clippy
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.14"
       - run: python -m venv .venv
@@ -149,9 +173,11 @@ jobs:
     # en un venv limpio (fuera del repo, sin PYTHONPATH) y correr el ejemplo.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.14"
       - run: python -m venv "$RUNNER_TEMP/build"
@@ -185,9 +211,10 @@ jobs:
     # y fugas en core::memory, core::interop y la capi. Necesita nightly; el resto del CI usa stable.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@2c76c034f9e32a5d6e2c104dc4df23a22476db04 # nightly
         with:
+          toolchain: nightly
           components: miri
       - run: cargo miri setup
       - run: "cargo miri test -p geoda-core -- memory:: interop::"

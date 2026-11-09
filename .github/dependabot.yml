@@ -1,0 +1,33 @@
+# Actualizaciones de dependencias (HU-074): una por ecosistema, agrupadas, a lo mucho 5 PR abiertos.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      cargo: { patterns: ["*"] }
+  - package-ecosystem: npm
+    directory: /bindings/node
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      npm: { patterns: ["*"] }
+  - package-ecosystem: npm
+    directory: /bindings/wasm
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      npm: { patterns: ["*"] }
+  - package-ecosystem: pip
+    directory: /bindings/python
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      pip: { patterns: ["*"] }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      github-actions: { patterns: ["*"] }
