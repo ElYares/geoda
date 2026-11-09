@@ -123,6 +123,33 @@ void clustering() {
   CHECK(geoda::kmeans({{0, 0, 10, 10}, {0, 1, 10, 11}}, 2, 1).labels == result.labels);  // determinista
 }
 
+void level_two() {
+  const auto f = geoda::qr({{3, 0}, {4, 5}});  // spec: linalg/qr_3_4_5
+  CHECK(near(f.q[0][0], -0.6, 1e-12) && near(f.q[0][1], 0.8, 1e-12) && near(f.q[1][0], -0.8, 1e-12) && near(f.q[1][1], -0.6, 1e-12));
+  CHECK(near(f.r[0][0], -5, 1e-12) && near(f.r[0][1], -4, 1e-12) && f.r[1][0] == 0.0 && near(f.r[1][1], -3, 1e-12));
+  const auto d = geoda::svd({{1, 0}, {0, 2}, {0, 0}});  // spec: linalg/svd_permutation_exact
+  CHECK((d.s == std::vector<double>{2, 1}));
+  CHECK((d.u == geoda::Matrix{{0, 1}, {1, 0}, {0, 0}}) && (d.vt == geoda::Matrix{{0, 1}, {1, 0}}));
+  CHECK(geoda::svd({{1, 0, 0}, {0, 3, 0}}).s.size() == 2);  // matriz ancha
+  const auto fit = geoda::lstsq({{1, 0}, {1, 1}, {1, 2}}, {1, 3, 5});
+  CHECK(near(fit.coefficients[0], 1, 1e-12) && near(fit.coefficients[1], 2, 1e-12) && near(fit.residual_norm, 0, 1e-12));
+  CHECK(throws("INVALID_ARGUMENT", [] { geoda::qr({{1, 2, 3}}); }));
+  CHECK(throws("INVALID_ARGUMENT", [] { geoda::lstsq({{1, 2}, {2, 4}, {3, 6}}, {1, 2, 3}); }));
+
+  const auto series = geoda::Column::from(std::vector<std::int64_t>{10, 9, 2, 5, 3, 7, 101, 18});
+  CHECK((geoda::lis(series) == std::vector<std::int64_t>{2, 4, 5, 7}));
+  CHECK(throws("INVALID_ARGUMENT", [] { geoda::lis(geoda::Column::from(std::vector<double>{1.0, std::nan(""), 3.0})); }));
+  const auto names = geoda::Column::from_strings({"Juan Perez", std::string("Juan P\xC3\xA9rez"), "Ana", std::nullopt, "Ana"});
+  const auto groups = geoda::dedupe(names, 1);
+  CHECK(groups.count == 2 && groups.ids[0] == 0 && groups.ids[1] == 0 && groups.ids[2] == 1 && !groups.ids[3] && groups.ids[4] == 1);
+  CHECK(throws("TYPE_MISMATCH", [&] { geoda::dedupe(series, 1); }));
+  const auto values = geoda::Column::from(std::vector<std::int64_t>{1, 2, 3, 4, 5, 6});
+  const auto h = geoda::histogram(values, 2, std::make_pair(2.0, 4.0));
+  CHECK((h.edges == std::vector<double>{2, 3, 4}) && (h.counts == std::vector<std::int64_t>{1, 2}));
+  CHECK(h.below == 1 && h.above == 2 && h.nulls == 0 && h.nans == 0);
+  CHECK(throws("INVALID_ARGUMENT", [&] { geoda::histogram(values, 0); }));
+}
+
 void abi() { CHECK(geoda::abi_version() == (1u << 16)); }
 }  // namespace
 
@@ -135,6 +162,7 @@ int main() {
   text();
   linear_algebra();
   clustering();
+  level_two();
   if (failures == 0) {
     std::cout << "geoda_cpp_test: ok" << std::endl;
     return 0;

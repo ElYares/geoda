@@ -12,6 +12,7 @@
 #ifndef GEODA_HPP
 #define GEODA_HPP
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -393,6 +394,97 @@ inline Matrix inverse(const Matrix& a) {
   GeodaColumn* out = nullptr;
   detail::check(geoda_inverse(list.pointers.data(), list.pointers.size(), &out));
   return detail::reshape(Column(out).values<double>(), a.size(), a.size());
+}
+
+// --- Nivel 2 (decision 016): qr, svd, lstsq, lis, dedupe, histogram.
+
+struct QrResult {
+  Matrix q;  // m x n, columnas ortonormales
+  Matrix r;  // n x n, triangular superior
+};
+
+// Factorizacion QR (Householder). Hacen falta al menos tantas filas como columnas (si no, `INVALID_ARGUMENT`).
+inline QrResult qr(const Matrix& a) {
+  const auto list = detail::columns_of(a);
+  GeodaColumn* q = nullptr;
+  GeodaColumn* r = nullptr;
+  detail::check(geoda_qr(list.pointers.data(), list.pointers.size(), &q, &r));
+  const Column q_column(q), r_column(r);
+  const std::size_t cols = a.front().size();
+  return {detail::reshape(q_column.values<double>(), a.size(), cols), detail::reshape(r_column.values<double>(), cols, cols)};
+}
+
+struct SvdResult {
+  Matrix u;                // m x k
+  std::vector<double> s;   // k valores singulares, de mayor a menor
+  Matrix vt;               // k x n
+};
+
+// SVD delgada `a = u diag(s) vt` (k = min(filas, columnas)); el signo es determinista.
+inline SvdResult svd(const Matrix& a) {
+  const auto list = detail::columns_of(a);
+  GeodaColumn* u = nullptr;
+  GeodaColumn* s = nullptr;
+  GeodaColumn* vt = nullptr;
+  detail::check(geoda_svd(list.pointers.data(), list.pointers.size(), &u, &s, &vt));
+  const Column u_column(u), s_column(s), vt_column(vt);
+  const std::size_t k = std::min(a.size(), a.front().size());
+  return {detail::reshape(u_column.values<double>(), a.size(), k), s_column.values<double>(),
+          detail::reshape(vt_column.values<double>(), k, a.front().size())};
+}
+
+struct LstsqResult {
+  std::vector<double> coefficients;
+  double residual_norm = 0;
+};
+
+// Minimos cuadrados `min |a x - b|` por QR; columnas dependientes dan `INVALID_ARGUMENT`.
+inline LstsqResult lstsq(const Matrix& a, const std::vector<double>& b) {
+  const auto list = detail::columns_of(a);
+  const Column rhs = Column::from(b);
+  GeodaColumn* x = nullptr;
+  LstsqResult result;
+  detail::check(geoda_lstsq(list.pointers.data(), list.pointers.size(), rhs.get(), &x, &result.residual_norm));
+  result.coefficients = Column(x).values<double>();
+  return result;
+}
+
+// Posiciones de la subsecuencia estrictamente creciente mas larga de una columna numerica sin nulos ni NaN.
+inline std::vector<std::int64_t> lis(const Column& column) {
+  GeodaColumn* out = nullptr;
+  detail::check(geoda_column_lis(column.get(), &out));
+  return Column(out).values<std::int64_t>();
+}
+
+struct DedupeResult {
+  std::vector<std::optional<std::int64_t>> ids;  // grupo de cada fila; `nullopt` en los nulos
+  std::int64_t count = 0;
+};
+
+// Agrupa las cadenas a distancia de edicion <= `max_distance` (componentes conexas de "estar cerca").
+inline DedupeResult dedupe(const Column& column, std::size_t max_distance = 1) {
+  GeodaColumn* ids = nullptr;
+  DedupeResult result;
+  detail::check(geoda_column_dedupe(column.get(), max_distance, &ids, &result.count));
+  result.ids = Column(ids).optional_values<std::int64_t>();
+  return result;
+}
+
+struct Histogram {
+  std::vector<double> edges;           // bins + 1 bordes
+  std::vector<std::int64_t> counts;    // bins conteos
+  std::int64_t below = 0, above = 0, nulls = 0, nans = 0;
+};
+
+// Histograma de ancho fijo con `bins` cubos; sin `range` usa [min, max] de los datos.
+inline Histogram histogram(const Column& column, std::size_t bins,
+                           std::optional<std::pair<double, double>> range = std::nullopt) {
+  GeodaColumn *edges = nullptr, *counts = nullptr, *outside = nullptr;
+  detail::check(geoda_column_histogram(column.get(), bins, range.has_value(), range ? range->first : 0.0,
+                                       range ? range->second : 0.0, 1, &edges, &counts, &outside));
+  const Column edges_column(edges), counts_column(counts), outside_column(outside);
+  const auto o = outside_column.values<std::int64_t>();
+  return {edges_column.values<double>(), counts_column.values<std::int64_t>(), o.at(0), o.at(1), o.at(2), o.at(3)};
 }
 
 // --- K-means.

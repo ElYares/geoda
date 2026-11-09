@@ -26,16 +26,19 @@ Compila con `g++` y `clang++` con `-Wall -Wextra -Wpedantic -Werror` y, por defe
 (`-DGEODA_SANITIZE=OFF` lo apaga). `cmake --install build/cpp --prefix <ruta>` copia `geoda/geoda.hpp` y
 `geoda.h`; la biblioteca `libgeoda.so` sale de `cargo build -p geoda-capi --release`.
 
-## Superficie (decisión 015, O4)
+## Superficie (decisiones 015 O4 y 016 P1)
 
 | | |
 |---|---|
 | `geoda::Column` | `from(vector<double/int32/int64>, validez)`, `from_bool`, `from_strings`; `size`, `null_count`, `dtype`, `validity`, `values<T>`, `optional_values<T>`, `bools`, `strings` |
 | Estadísticos | `count`, `sum`, `min`, `max` (devuelven `std::variant<int64_t, double>`: entero si la columna lo es), `mean`, `var`, `std_dev` (`ddof = 1`), `median`, `percentile`, `corr` |
 | Texto | `edit_distance` (dos cadenas o dos columnas) |
-| Álgebra lineal | `matmul`, `solve`, `det`, `inverse` sobre `vector<vector<double>>` **por filas** |
+| Álgebra lineal | `matmul`, `solve`, `det`, `inverse`, `qr`, `svd`, `lstsq` sobre `vector<vector<double>>` **por filas** |
+| Series, texto y estadística | `lis`, `dedupe`, `histogram` |
 | Minería | `kmeans(variables, k, seed)` con las variables como **columnas** |
 | Errores | `geoda::Error` con `code()`, `category()` y el mensaje de la capi |
+
+Quedan solo en Python (nivel 3, decisión 016 P2): los modelos con estado (regresión, PCA, árbol), los grafos, Huffman, Apriori y `group_by`.
 
 `workers` no se expone: siempre es 1. Para más funciones, llama a la C-API directamente (`geoda.h`) con
 `geoda::Column::get()` y `release()`.
