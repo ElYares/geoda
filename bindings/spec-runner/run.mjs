@@ -85,7 +85,8 @@ const rowsOf = (columns) =>
 
 const SUPPORTED = new Set([
   'roundtrip', 'array_roundtrip', 'count', 'sum', 'min', 'max', 'mean', 'var', 'std', 'median', 'percentile',
-  'corr', 'edit_distance', 'matmul', 'lu_solve', 'det', 'inverse', 'kmeans',
+  'corr', 'edit_distance', 'matmul', 'lu_solve', 'det', 'inverse', 'kmeans', 'qr', 'svd', 'lstsq', 'lis', 'dedupe',
+  'histogram',
 ]);
 
 // Devuelve el motivo si el caso no se puede expresar en JavaScript.
@@ -131,6 +132,34 @@ function run(api, c) {
       case 'lu_solve': columns = [api.solve(rowsOf(c.inputs), c.input.values.map(Number))]; break;
       case 'det': scalar = api.det(rowsOf(c.inputs)); break;
       case 'inverse': columns = [api.inverse(rowsOf(c.inputs)).flat()]; break;
+      case 'qr': {
+        const { q, r } = api.qr(rowsOf(c.inputs));
+        columns = [q.flat(), r.flat()];
+        break;
+      }
+      case 'svd': {
+        const { u, s, vt } = api.svd(rowsOf(c.inputs));
+        columns = [u.flat(), s, vt.flat()];
+        break;
+      }
+      case 'lstsq': {
+        const { coefficients, residualNorm } = api.lstsq(rowsOf(c.inputs), c.input.values.map(Number));
+        assert.ok(same(residualNorm, expect.residual_norm, 'float64', tolerance), `residual_norm ${residualNorm}`);
+        columns = [coefficients];
+        break;
+      }
+      case 'lis': columns = [api.lis(make(c.input)).map(BigInt)]; break;
+      case 'dedupe': {
+        const { ids, count } = api.dedupe(make(c.input), c.args.max_distance);
+        assert.equal(count, expect.count);
+        columns = [ids];
+        break;
+      }
+      case 'histogram': {
+        const h = api.histogram(make(c.input), c.args.n_bins, c.args.range?.map(floatOf));
+        columns = [h.edges, h.counts.map(BigInt), [h.below, h.above, h.nulls, h.nans].map(BigInt)];
+        break;
+      }
       case 'kmeans': {
         const variables = c.inputs.map((col) => col.values.map(Number));
         const r = api.kmeans(variables, c.args.k, { seed: BigInt(c.args.seed), maxIter: c.args.max_iter, tol: c.args.tol });

@@ -506,6 +506,132 @@ static napi_value kmeans(napi_env env, napi_callback_info info) {
   return result;
 }
 
+/* factor(op, list) -> [external...]. op 0 = qr -> [q, r]; op 1 = svd -> [u, s, vt]. */
+static napi_value factor(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value argv[2];
+  CHECK_NAPI(env, napi_get_cb_info(env, info, &argc, argv, NULL, NULL));
+  int32_t op;
+  CHECK_NAPI(env, napi_get_value_int32(env, argv[0], &op));
+  size_t n = 0;
+  const struct GeodaColumn **list = column_list(env, argv[1], &n);
+  if (list == NULL) return NULL;
+  struct GeodaColumn *outs[3] = {NULL, NULL, NULL};
+  size_t used = op == 0 ? 2 : 3;
+  int code = op == 0 ? geoda_qr(list, n, &outs[0], &outs[1])
+                     : geoda_svd(list, n, &outs[0], &outs[1], &outs[2]);
+  free(list);
+  if (code != GEODA_OK) return throw_geoda(env, code);
+  napi_value array;
+  CHECK_NAPI(env, napi_create_array_with_length(env, used, &array));
+  for (size_t i = 0; i < used; i++) {
+    napi_value item = wrap_column(env, outs[i]);
+    if (item == NULL) {
+      for (size_t j = i + 1; j < used; j++) geoda_column_free(outs[j]);
+      return NULL;
+    }
+    napi_set_element(env, array, (uint32_t)i, item);
+  }
+  return array;
+}
+
+/* lstsq(list, b) -> {x: external, residual: number} */
+static napi_value lstsq(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value argv[2];
+  CHECK_NAPI(env, napi_get_cb_info(env, info, &argc, argv, NULL, NULL));
+  size_t n = 0;
+  const struct GeodaColumn **list = column_list(env, argv[0], &n);
+  if (list == NULL) return NULL;
+  struct GeodaColumn *rhs = column_of(env, argv[1]);
+  if (rhs == NULL) {
+    free(list);
+    return NULL;
+  }
+  struct GeodaColumn *x = NULL;
+  double residual = 0.0;
+  int code = geoda_lstsq(list, n, rhs, &x, &residual);
+  free(list);
+  if (code != GEODA_OK) return throw_geoda(env, code);
+  napi_value result, value;
+  CHECK_NAPI(env, napi_create_object(env, &result));
+  value = wrap_column(env, x);
+  if (value == NULL) return NULL;
+  napi_set_named_property(env, result, "x", value);
+  napi_create_double(env, residual, &value);
+  napi_set_named_property(env, result, "residual", value);
+  return result;
+}
+
+/* lis(col) -> external (posiciones, Int64) */
+static napi_value lis(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  CHECK_NAPI(env, napi_get_cb_info(env, info, &argc, argv, NULL, NULL));
+  struct GeodaColumn *col = column_of(env, argv[0]);
+  if (col == NULL) return NULL;
+  struct GeodaColumn *out = NULL;
+  int code = geoda_column_lis(col, &out);
+  if (code != GEODA_OK) return throw_geoda(env, code);
+  return wrap_column(env, out);
+}
+
+/* dedupe(col, maxDistance) -> {ids: external, count: number} */
+static napi_value dedupe(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value argv[2];
+  CHECK_NAPI(env, napi_get_cb_info(env, info, &argc, argv, NULL, NULL));
+  struct GeodaColumn *col = column_of(env, argv[0]);
+  if (col == NULL) return NULL;
+  double max_distance = 0;
+  CHECK_NAPI(env, napi_get_value_double(env, argv[1], &max_distance));
+  if (max_distance < 0) return throw_code(env, GEODA_ERR_INVALID_ARGUMENT, "maxDistance debe ser >= 0");
+  struct GeodaColumn *ids = NULL;
+  int64_t count = 0;
+  int code = geoda_column_dedupe(col, (size_t)max_distance, &ids, &count);
+  if (code != GEODA_OK) return throw_geoda(env, code);
+  napi_value result, value;
+  CHECK_NAPI(env, napi_create_object(env, &result));
+  value = wrap_column(env, ids);
+  if (value == NULL) return NULL;
+  napi_set_named_property(env, result, "ids", value);
+  napi_create_double(env, (double)count, &value);
+  napi_set_named_property(env, result, "count", value);
+  return result;
+}
+
+/* histogram(col, bins, hasRange, lo, hi) -> {edges, counts, outside}: tres externals */
+static napi_value histogram(napi_env env, napi_callback_info info) {
+  size_t argc = 5;
+  napi_value argv[5];
+  CHECK_NAPI(env, napi_get_cb_info(env, info, &argc, argv, NULL, NULL));
+  struct GeodaColumn *col = column_of(env, argv[0]);
+  if (col == NULL) return NULL;
+  double bins = 0, lo = 0, hi = 0;
+  bool has_range = false;
+  CHECK_NAPI(env, napi_get_value_double(env, argv[1], &bins));
+  CHECK_NAPI(env, napi_get_value_bool(env, argv[2], &has_range));
+  CHECK_NAPI(env, napi_get_value_double(env, argv[3], &lo));
+  CHECK_NAPI(env, napi_get_value_double(env, argv[4], &hi));
+  if (bins < 0) return throw_code(env, GEODA_ERR_INVALID_ARGUMENT, "bins debe ser >= 0");
+  struct GeodaColumn *edges = NULL, *counts = NULL, *outside = NULL;
+  int code = geoda_column_histogram(col, (size_t)bins, has_range, lo, hi, 1, &edges, &counts, &outside);
+  if (code != GEODA_OK) return throw_geoda(env, code);
+  struct GeodaColumn *all[3] = {edges, counts, outside};
+  static const char *names[3] = {"edges", "counts", "outside"};
+  napi_value result;
+  CHECK_NAPI(env, napi_create_object(env, &result));
+  for (int i = 0; i < 3; i++) {
+    napi_value item = wrap_column(env, all[i]);
+    if (item == NULL) {
+      for (int j = i + 1; j < 3; j++) geoda_column_free(all[j]);
+      return NULL;
+    }
+    napi_set_named_property(env, result, names[i], item);
+  }
+  return result;
+}
+
 static napi_value abi_version(napi_env env, napi_callback_info info) {
   (void)info;
   napi_value result;
@@ -532,6 +658,11 @@ NAPI_MODULE_INIT() {
   EXPORT("pair", pair);
   EXPORT("list", list_op);
   EXPORT("kmeans", kmeans);
+  EXPORT("factor", factor);
+  EXPORT("lstsq", lstsq);
+  EXPORT("lis", lis);
+  EXPORT("dedupe", dedupe);
+  EXPORT("histogram", histogram);
   EXPORT("abiVersion", abi_version);
   return exports;
 }

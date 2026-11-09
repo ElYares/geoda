@@ -32,16 +32,19 @@ Con `node-gyp` instalado desde el sistema (Arch) basta `--nodedir=/usr` para no 
 enlaza con `libgeoda` y deja un `rpath` a `GEODA_LIB_DIR` (por defecto `target/debug`). Hace falta Node 22 o
 mayor.
 
-## Superficie (decisión 015, O4)
+## Superficie (decisiones 015 O4 y 016 P1)
 
 | | |
 |---|---|
 | `Column` | `fromFloat64`, `fromInt32`, `fromBigInt64`, `fromBool`, `fromStrings` (con `validity` opcional: `Uint8Array`, 1 = válido); `length`, `nullCount`, `dtype`, `validity()`, `toFloat64Array`, `toInt32Array`, `toBigInt64Array`, `toBoolArray`, `toStrings`, `free()` |
 | Estadísticos | `count`, `sum`, `min`, `max` (`bigint` en columnas enteras), `mean`, `variance`, `std` (`ddof = 1`), `median`, `percentile`, `corr` |
 | Texto | `editDistance` (dos cadenas o dos columnas) |
-| Álgebra lineal | `matmul`, `solve`, `det`, `inverse` sobre arreglos de **filas** |
+| Álgebra lineal | `matmul`, `solve`, `det`, `inverse`, `qr`, `svd`, `lstsq` sobre arreglos de **filas** |
+| Series, texto y estadística | `lis` (subsecuencia creciente más larga), `dedupe` (cadenas casi iguales), `histogram` |
 | Minería | `kmeans(variables, k, {seed, maxIter, tol})` con las variables como **columnas** |
 | Errores | `Error` con `code` y `category`; un tipo de arreglo equivocado es `TypeError` |
+
+Quedan solo en Python (nivel 3, decisión 016 P2): los modelos con estado (regresión, PCA, árbol), los grafos, Huffman, Apriori y `group_by`.
 
 Los enteros de 64 bits son `BigInt`. `workers` no se expone: siempre es 1.
 
@@ -49,6 +52,6 @@ Los enteros de 64 bits son `BigInt`. `workers` no se expone: siempre es 1.
 
 `test/geoda.test.js` (valores de la spec) y `test/spec.test.mjs`, que ejecuta (con el runner compartido
 [`bindings/spec-runner`](../spec-runner/run.mjs)) los casos de `spec/cases/` que el
-binding soporta (unos 65; los demás se saltan con el motivo: operación fuera de la superficie mínima, `workers`
+binding soporta (unos 90; los demás se saltan con el motivo: operación fuera de la superficie mínima, `workers`
 distinto de 1, nulos o texto dentro de una matriz). Los dos runners de Rust y Python siguen siendo los que
 cubren la spec entera.

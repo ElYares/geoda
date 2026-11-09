@@ -3,4 +3,4 @@ import { createRequire } from 'node:module';
 import { registerSpecTests } from '../../spec-runner/run.mjs';
 
 const geoda = createRequire(import.meta.url)('..');
-registerSpecTests(geoda, { minimum: 60 });
+registerSpecTests(geoda, { minimum: 85 });

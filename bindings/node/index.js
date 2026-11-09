@@ -199,6 +199,81 @@ module.exports = {
   det: (a) => withColumns(columnsOfRows(a), (list) => native.list(LIST.det, list)),
   inverse: (a) => withColumns(columnsOfRows(a), (list) => takeFlat(native.list(LIST.inverse, list), a.length, a.length)),
 
+  /** Factorizacion QR (Householder) de una matriz por filas con al menos tantas filas como columnas. */
+  qr: (a) =>
+    withColumns(columnsOfRows(a), (list) => {
+      const [q, r] = native.factor(0, list);
+      return { q: takeFlat(q, a.length, a[0].length), r: takeFlat(r, a[0].length, a[0].length) };
+    }),
+  /** SVD delgada `a = u diag(s) vt` (valores de mayor a menor, signo determinista). */
+  svd: (a) =>
+    withColumns(columnsOfRows(a), (list) => {
+      const k = Math.min(a.length, a[0].length);
+      const [u, s, vt] = native.factor(1, list);
+      const values = new Column(s);
+      try {
+        return { u: takeFlat(u, a.length, k), s: Array.from(values.toFloat64Array()), vt: takeFlat(vt, k, a[0].length) };
+      } finally {
+        values.free();
+      }
+    }),
+  /** Minimos cuadrados `min |a x - b|` (QR): los coeficientes y la norma del residuo. */
+  lstsq(a, b) {
+    const rhs = Column.fromFloat64(Float64Array.from(b));
+    try {
+      return withColumns(columnsOfRows(a), (list) => {
+        const { x, residual } = native.lstsq(list, rhs.handle);
+        const coefficients = new Column(x);
+        try {
+          return { coefficients: Array.from(coefficients.toFloat64Array()), residualNorm: residual };
+        } finally {
+          coefficients.free();
+        }
+      });
+    } finally {
+      rhs.free();
+    }
+  },
+
+  /** Posiciones de la subsecuencia estrictamente creciente mas larga de una columna numerica sin nulos. */
+  lis(column) {
+    const result = new Column(native.lis(column.handle));
+    try {
+      return Array.from(result.toBigInt64Array(), Number);
+    } finally {
+      result.free();
+    }
+  },
+  /** Agrupa las cadenas a distancia de edicion <= `maxDistance` (componentes conexas); `ids[i]` es `null` en los nulos. */
+  dedupe(column, maxDistance = 1) {
+    const { ids, count } = native.dedupe(column.handle, maxDistance);
+    const result = new Column(ids);
+    try {
+      const valid = result.validity();
+      return { ids: Array.from(result.toBigInt64Array(), (v, i) => (valid[i] ? Number(v) : null)), count };
+    } finally {
+      result.free();
+    }
+  },
+  /** Histograma de ancho fijo; `range` = `[lo, hi]` o `undefined` para `[min, max]`. */
+  histogram(column, bins, range) {
+    const raw = native.histogram(column.handle, bins, range !== undefined, range?.[0] ?? 0, range?.[1] ?? 0);
+    const [edges, counts, outside] = [raw.edges, raw.counts, raw.outside].map((h) => new Column(h));
+    try {
+      const [below, above, nulls, nans] = Array.from(outside.toBigInt64Array(), Number);
+      return {
+        edges: Array.from(edges.toFloat64Array()),
+        counts: Array.from(counts.toBigInt64Array(), Number),
+        below,
+        above,
+        nulls,
+        nans,
+      };
+    } finally {
+      [edges, counts, outside].forEach((c) => c.free());
+    }
+  },
+
   /** `variables` es un arreglo de columnas (cada una `Float64Array` o `number[]`). */
   kmeans(variables, k, { seed = 0n, maxIter = 100, tol = 1e-4 } = {}) {
     const columns = variables.map((v) => Column.fromFloat64(Float64Array.from(v)));

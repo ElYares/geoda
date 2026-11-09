@@ -45,6 +45,17 @@ export declare function solve(a: Matrix, b: ArrayLike<number>): number[];
 export declare function det(a: Matrix): number;
 export declare function inverse(a: Matrix): number[][];
 
+export declare function qr(a: Matrix): { q: number[][]; r: number[][] };
+export declare function svd(a: Matrix): { u: number[][]; s: number[]; vt: number[][] };
+export declare function lstsq(a: Matrix, b: ArrayLike<number>): { coefficients: number[]; residualNorm: number };
+export declare function lis(column: Column): number[];
+export declare function dedupe(column: Column, maxDistance?: number): { ids: (number | null)[]; count: number };
+export declare function histogram(
+  column: Column,
+  bins: number,
+  range?: [number, number],
+): { edges: number[]; counts: number[]; below: number; above: number; nulls: number; nans: number };
+
 export interface KMeansResult {
   labels: number[];
   centroids: number[][];
